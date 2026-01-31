@@ -77,6 +77,21 @@
     .task.priority-high { border-left-color: #ff6b6b; }
     .task.priority-medium { border-left-color: #ffd93d; }
     .task.priority-low { border-left-color: #6bcb77; }
+    .task.type-recurring { 
+      background: rgba(0,217,255,0.08);
+      border-right: 3px solid #00d9ff;
+    }
+    .task.type-single { background: rgba(255,255,255,0.08); }
+    .task-type {
+      display: inline-block;
+      font-size: 0.65rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .task-type.recurring { background: rgba(0,217,255,0.3); color: #00d9ff; }
+    .task-type.single { background: rgba(255,255,255,0.15); color: #888; }
     .task-title {
       font-weight: 500;
       margin-bottom: 6px;
@@ -190,6 +205,10 @@
         <option value="medium" selected>🟡 Medium Priority</option>
         <option value="low">🟢 Low Priority</option>
       </select>
+      <select id="task-type">
+        <option value="single" selected>📌 Single Task (one-time)</option>
+        <option value="recurring">🔄 Recurring (ongoing)</option>
+      </select>
       <div class="modal-buttons">
         <button class="btn-secondary" onclick="closeModal()">Cancel</button>
         <button class="btn-primary" onclick="addTask()">Add Task</button>
@@ -248,11 +267,14 @@
         const tasksContainer = col.querySelector('.tasks');
         colTasks.forEach(task => {
           const taskEl = document.createElement('div');
-          taskEl.className = `task priority-${task.priority}`;
+          const taskType = task.type || 'single';
+          taskEl.className = `task priority-${task.priority} type-${taskType}`;
           taskEl.draggable = true;
           taskEl.dataset.id = task.id;
+          const typeLabel = taskType === 'recurring' ? '🔄 recurring' : '📌 single';
+          const typeBadge = `<span class="task-type ${taskType}">${typeLabel}</span>`;
           taskEl.innerHTML = `
-            <div class="task-title">${task.title}</div>
+            <div class="task-title">${task.title}${typeBadge}</div>
             <div class="task-desc">${task.description}</div>
             <div class="task-meta">
               <span>${task.created}</span>
@@ -319,6 +341,7 @@
       const title = document.getElementById('task-title').value.trim();
       const desc = document.getElementById('task-desc').value.trim();
       const priority = document.getElementById('task-priority').value;
+      const type = document.getElementById('task-type').value;
 
       if (!title) return;
 
@@ -328,7 +351,8 @@
         description: desc || 'No description',
         column: 'inbox',
         created: new Date().toISOString().split('T')[0],
-        priority
+        priority,
+        type
       };
 
       tasks.push(task);

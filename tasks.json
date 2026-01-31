@@ -7,7 +7,8 @@
       "description": "Check genie inbox every hour during working hours, respond or forward as needed",
       "column": "in_progress",
       "created": "2026-01-31",
-      "priority": "high"
+      "priority": "high",
+      "type": "recurring"
     },
     {
       "id": "2", 
@@ -15,7 +16,8 @@
       "description": "Daily 7am email with calendar, tasks, weather, inbox summary",
       "column": "in_progress",
       "created": "2026-01-31",
-      "priority": "high"
+      "priority": "high",
+      "type": "recurring"
     },
     {
       "id": "3",
@@ -23,7 +25,8 @@
       "description": "LinkedIn lookup for external attendees ~1hr before meetings",
       "column": "in_progress",
       "created": "2026-01-31",
-      "priority": "medium"
+      "priority": "medium",
+      "type": "recurring"
     },
     {
       "id": "4",
@@ -31,7 +34,8 @@
       "description": "Sign into Google in clawd browser to properly edit (not append) docs",
       "column": "todo",
       "created": "2026-01-31",
-      "priority": "low"
+      "priority": "low",
+      "type": "single"
     }
   ]
 }
