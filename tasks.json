@@ -1,0 +1,37 @@
+{
+  "columns": ["inbox", "todo", "in_progress", "done"],
+  "tasks": [
+    {
+      "id": "1",
+      "title": "Hourly email checks",
+      "description": "Check genie inbox every hour during working hours, respond or forward as needed",
+      "column": "in_progress",
+      "created": "2026-01-31",
+      "priority": "high"
+    },
+    {
+      "id": "2", 
+      "title": "Morning briefing",
+      "description": "Daily 7am email with calendar, tasks, weather, inbox summary",
+      "column": "in_progress",
+      "created": "2026-01-31",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "title": "Meeting prep",
+      "description": "LinkedIn lookup for external attendees ~1hr before meetings",
+      "column": "in_progress",
+      "created": "2026-01-31",
+      "priority": "medium"
+    },
+    {
+      "id": "4",
+      "title": "Fix birthday doc editing",
+      "description": "Sign into Google in clawd browser to properly edit (not append) docs",
+      "column": "todo",
+      "created": "2026-01-31",
+      "priority": "low"
+    }
+  ]
+}
