@@ -758,6 +758,36 @@
       .bottom-nav { display: none; }
       .task-container { padding-bottom: 40px; max-width: 900px; }
     }
+
+    /* === ANIMATIONS === */
+    @keyframes sparkle {
+      0% { transform: scale(0) rotate(0deg); opacity: 1; }
+      50% { transform: scale(1.2) rotate(180deg); opacity: 1; }
+      100% { transform: scale(0) rotate(360deg); opacity: 0; }
+    }
+
+    @keyframes celebrate {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); box-shadow: 0 0 20px var(--accent); }
+    }
+
+    @keyframes fadeUp {
+      0% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-30px); }
+    }
+
+    .wish-sparkle {
+      position: fixed;
+      font-size: 2rem;
+      pointer-events: none;
+      z-index: 1000;
+      animation: fadeUp 0.8s ease-out forwards;
+    }
+
+    .grant-celebrate {
+      animation: celebrate 0.6s ease-out;
+    }
+
   </style>
 </head>
 <body>
@@ -941,6 +971,31 @@
       if (!title) { openNewTask(); } else { quickAdd(); }
     }
 
+    function showWishSparkle() {
+      const sparkle = document.createElement("div");
+      sparkle.className = "wish-sparkle";
+      sparkle.textContent = "✨";
+      sparkle.style.left = Math.random() * window.innerWidth + "px";
+      sparkle.style.top = "150px";
+      document.body.appendChild(sparkle);
+      setTimeout(() => sparkle.remove(), 800);
+    }
+
+    function showGrantCelebration() {
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => {
+          const sparkle = document.createElement("div");
+          sparkle.className = "wish-sparkle";
+          sparkle.textContent = ["🎉", "✨", "🌟", "💫", "⭐"][i];
+          sparkle.style.left = (20 + Math.random() * 60) + "%";
+          sparkle.style.top = (30 + Math.random() * 40) + "%";
+          document.body.appendChild(sparkle);
+          setTimeout(() => sparkle.remove(), 800);
+        }, i * 100);
+      }
+    }
+
+
     function quickAdd() {
       const input = document.getElementById('quick-input');
       const title = input.value.trim();
@@ -958,6 +1013,7 @@
         type: 'single',
         comments: []
       });
+      showWishSparkle();
 
       input.value = '';
       renderAll();
@@ -1161,7 +1217,7 @@
       const newIdx = idx + direction;
       if (newIdx < 0 || newIdx >= COLUMN_ORDER.length) return;
       
-      task.column = COLUMN_ORDER[newIdx]; if (COLUMN_ORDER[newIdx] === "done") closeViewModal(); if (COLUMN_ORDER[newIdx] === "done") closeViewModal();
+      task.column = COLUMN_ORDER[newIdx]; if (COLUMN_ORDER[newIdx] === "done") { showGrantCelebration(); setTimeout(closeViewModal, 600); } if (COLUMN_ORDER[newIdx] === "done") closeViewModal();
       
       if (viewingTaskId === id) viewTask(id);
       renderAll();
@@ -1232,6 +1288,7 @@
           created: new Date().toISOString().split('T')[0],
           comments: []
         });
+      showWishSparkle();
       }
 
       closeEditModal();
