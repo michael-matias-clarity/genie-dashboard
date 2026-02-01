@@ -132,6 +132,17 @@
       margin: 0 auto;
     }
 
+    #voice-btn {
+      padding: 14px 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 1.2rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #voice-btn:hover { background: var(--bg-secondary); }
+
     .quick-add input {
       flex: 1;
       padding: 14px 18px;
@@ -836,6 +847,7 @@
   <div class="quick-add">
     <div class="quick-add-inner">
       <input type="text" id="quick-input" placeholder="Make a wish..." enterkeyhint="send">
+      <button id="voice-btn" onclick="toggleVoiceRecording()" title="Voice wish">🎤</button>
       <button onclick="smartAdd()">✨ Wish</button>
     </div>
   </div>
@@ -1621,6 +1633,76 @@
     document.getElementById('comment-input').addEventListener('focus', () => {
       setTimeout(() => document.getElementById('comment-input').scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
     });
+
+    // Voice recording for wishes
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    async function toggleVoiceRecording() {
+      const btn = document.getElementById('voice-btn');
+      
+      if (isRecording) {
+        // Stop recording
+        mediaRecorder.stop();
+        btn.textContent = '🎤';
+        btn.style.background = '';
+        isRecording = false;
+      } else {
+        // Start recording
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          audioChunks = [];
+          
+          mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+          mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach(t => t.stop());
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await transcribeAudio(audioBlob);
+          };
+          
+          mediaRecorder.start();
+          btn.textContent = '⏹️';
+          btn.style.background = 'var(--danger)';
+          isRecording = true;
+        } catch (err) {
+          alert('Microphone access denied. Please allow microphone access to use voice wishes.');
+        }
+      }
+    }
+
+    async function transcribeAudio(blob) {
+      const btn = document.getElementById('voice-btn');
+      btn.textContent = '⏳';
+      
+      try {
+        // Convert blob to base64
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+          const base64 = reader.result.split(',')[1];
+          
+          const res = await fetch('/api/transcribe', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: base64 })
+          });
+          const data = await res.json();
+          
+          if (data.text) {
+            document.getElementById('quick-input').value = data.text;
+            btn.textContent = '🎤';
+          } else {
+            alert(data.error || 'Could not transcribe audio.');
+            btn.textContent = '🎤';
+          }
+        };
+      } catch (err) {
+        alert('Transcription failed: ' + err.message);
+        btn.textContent = '🎤';
+      }
+    }
 
     loadTasks();
     setInterval(loadTasks, 30000);

@@ -350,6 +350,71 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/transcribe (Whisper)
+  if (req.url === '/api/transcribe' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { audio } = JSON.parse(body);
+        const apiKey = process.env.OPENAI_API_KEY;
+        
+        if (!apiKey) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'OpenAI API key not configured' }));
+          return;
+        }
+
+        // Convert base64 to buffer
+        const audioBuffer = Buffer.from(audio, 'base64');
+        
+        // Create multipart form data manually
+        const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substr(2);
+        const formData = Buffer.concat([
+          Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
+          audioBuffer,
+          Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--${boundary}--\r\n`)
+        ]);
+
+        const apiReq = https.request({
+          hostname: 'api.openai.com',
+          path: '/v1/audio/transcriptions',
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Length': formData.length
+          }
+        }, (apiRes) => {
+          let data = '';
+          apiRes.on('data', chunk => data += chunk);
+          apiRes.on('end', () => {
+            try {
+              const result = JSON.parse(data);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ text: result.text || '' }));
+            } catch (e) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: e.message }));
+            }
+          });
+        });
+
+        apiReq.on('error', (e) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        });
+
+        apiReq.write(formData);
+        apiReq.end();
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // GET /api/history
   if (req.url.startsWith('/api/history') && req.method === 'GET') {
     const history = await getHistory();
