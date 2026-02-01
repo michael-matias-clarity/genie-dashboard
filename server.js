@@ -32,7 +32,8 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml'
 };
 
-const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [] };
+const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [], history: [] };
+const HISTORY_KEY = 'lamp:history';
 
 // In-memory cache
 let tasksCache = null;
@@ -111,6 +112,40 @@ async function saveTasks(data) {
   } catch (e) {}
 }
 
+// History cache
+let historyCache = [];
+
+// Get history from Redis
+async function getHistory() {
+  if (historyCache.length > 0) return historyCache;
+  if (redis) {
+    try {
+      let data = await redis.get(HISTORY_KEY);
+      if (typeof data === 'string') data = JSON.parse(data);
+      if (Array.isArray(data)) {
+        historyCache = data;
+        return data;
+      }
+    } catch (e) {
+      console.error('History GET error:', e.message);
+    }
+  }
+  return [];
+}
+
+// Save history entry
+async function addHistoryEntry(entry) {
+  historyCache.unshift(entry); // Add to front
+  historyCache = historyCache.slice(0, 500); // Keep last 500
+  if (redis) {
+    try {
+      await redis.set(HISTORY_KEY, historyCache);
+    } catch (e) {
+      console.error('History SET error:', e.message);
+    }
+  }
+}
+
 // Handle task operations
 function handleTaskOperation(data, body) {
   const { action, taskId, task, updates, comment } = body;
@@ -122,17 +157,48 @@ function handleTaskOperation(data, body) {
         task.created = task.created || new Date().toISOString().split('T')[0];
         task.comments = task.comments || [];
         data.tasks.push(task);
+        // Log to history
+        addHistoryEntry({
+          type: 'add',
+          taskId: task.id,
+          taskTitle: task.title,
+          author: 'michael',
+          time: new Date().toISOString()
+        });
       }
       break;
       
     case 'update':
       const toUpdate = data.tasks.find(t => t.id === taskId);
       if (toUpdate && updates) {
+        const oldColumn = toUpdate.column;
         Object.assign(toUpdate, updates);
+        // Log column moves to history
+        if (updates.column && updates.column !== oldColumn) {
+          addHistoryEntry({
+            type: 'move',
+            taskId,
+            taskTitle: toUpdate.title,
+            from: oldColumn,
+            to: updates.column,
+            author: 'unknown',
+            time: new Date().toISOString()
+          });
+        }
       }
       break;
       
     case 'delete':
+      const toDelete = data.tasks.find(t => t.id === taskId);
+      if (toDelete) {
+        addHistoryEntry({
+          type: 'delete',
+          taskId,
+          taskTitle: toDelete.title,
+          author: 'michael',
+          time: new Date().toISOString()
+        });
+      }
       data.tasks = data.tasks.filter(t => t.id !== taskId);
       break;
       
@@ -141,6 +207,15 @@ function handleTaskOperation(data, body) {
       if (toComment && comment) {
         toComment.comments = toComment.comments || [];
         toComment.comments.push(comment);
+        // Log comment to history
+        addHistoryEntry({
+          type: 'comment',
+          taskId,
+          taskTitle: toComment.title,
+          author: comment.author || 'unknown',
+          commentText: comment.text?.substring(0, 100),
+          time: new Date().toISOString()
+        });
       }
       break;
       
@@ -272,6 +347,20 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+
+  // GET /api/history
+  if (req.url.startsWith('/api/history') && req.method === 'GET') {
+    const history = await getHistory();
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const author = url.searchParams.get('author');
+    let filtered = history;
+    if (author && author !== 'all') {
+      filtered = history.filter(h => h.author === author);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(filtered.slice(0, 100)));
     return;
   }
 

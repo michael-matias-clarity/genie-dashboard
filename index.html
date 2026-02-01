@@ -858,6 +858,9 @@
     <button class="nav-item" data-view="add" onclick="openNewTask()">
       <span class="icon">✨</span>New
     </button>
+    <button class="nav-item" data-view="history" onclick="switchView('history')">
+      <span class="icon">📜</span>History
+    </button>
     <button class="nav-item" data-view="stats" onclick="switchView('stats')">
       <span class="icon">📊</span>Stats
     </button>
@@ -1204,6 +1207,7 @@
       renderTabs();
       if (currentView === 'tasks') renderTasks();
       else if (currentView === 'stats') renderStats();
+      else if (currentView === 'history') renderHistory();
     }
 
     function selectColumn(col) {
@@ -1518,7 +1522,60 @@
       currentView = view;
       document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
       if (view === 'stats') renderStats();
+      else if (view === 'history') renderHistory();
       else renderTasks();
+    }
+
+    let historyFilter = 'all';
+    async function renderHistory() {
+      const container = document.getElementById('content');
+      container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary)">Loading history...</div>';
+      
+      try {
+        const res = await fetch('/api/history?author=' + historyFilter);
+        const history = await res.json();
+        
+        const filterHtml = `
+          <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+            <button class="filter-btn ${historyFilter === 'all' ? 'active' : ''}" onclick="setHistoryFilter('all')">All</button>
+            <button class="filter-btn ${historyFilter === 'michael' ? 'active' : ''}" onclick="setHistoryFilter('michael')">Michael</button>
+            <button class="filter-btn ${historyFilter === 'genie' ? 'active' : ''}" onclick="setHistoryFilter('genie')">Genie</button>
+          </div>
+        `;
+        
+        if (history.length === 0) {
+          container.innerHTML = filterHtml + '<div style="padding:40px;text-align:center;color:var(--text-secondary)">No history yet</div>';
+          return;
+        }
+        
+        const items = history.map(h => {
+          const time = new Date(h.time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const icon = h.type === 'add' ? '✨' : h.type === 'move' ? '→' : h.type === 'comment' ? '💬' : h.type === 'delete' ? '🗑️' : '•';
+          const authorIcon = h.author === 'genie' ? '🧞' : h.author === 'michael' ? '👤' : '';
+          let desc = '';
+          if (h.type === 'add') desc = 'Created: ' + h.taskTitle;
+          else if (h.type === 'move') desc = 'Moved "' + h.taskTitle + '" ' + h.from + ' → ' + h.to;
+          else if (h.type === 'comment') desc = 'Commented on "' + h.taskTitle + '": ' + (h.commentText || '');
+          else if (h.type === 'delete') desc = 'Deleted: ' + h.taskTitle;
+          
+          return '<div style="padding:12px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;">' +
+            '<span style="font-size:1.2rem;">' + icon + '</span>' +
+            '<div style="flex:1;">' +
+              '<div style="color:var(--text-primary);font-size:0.9rem;">' + desc + '</div>' +
+              '<div style="color:var(--text-tertiary);font-size:0.75rem;margin-top:4px;">' + authorIcon + ' ' + h.author + ' • ' + time + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        
+        container.innerHTML = filterHtml + '<div style="background:var(--bg-secondary);border-radius:var(--radius-lg);overflow:hidden;">' + items + '</div>';
+      } catch (e) {
+        container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--error)">Error loading history</div>';
+      }
+    }
+    
+    function setHistoryFilter(f) {
+      historyFilter = f;
+      renderHistory();
     }
 
     function renderStats() {
