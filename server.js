@@ -416,6 +416,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/console - Real-time Genie status
+  if (req.url === '/api/console' && req.method === 'GET') {
+    if (redis) {
+      try {
+        let status = await redis.get('genie:status');
+        if (typeof status === 'string') status = JSON.parse(status);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status || { active: false, sessions: [] }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    } else {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ active: false, sessions: [], message: 'Redis not configured' }));
+    }
+    return;
+  }
+
+  // POST /api/console - Update Genie status (called by Genie)
+  if (req.url === '/api/console' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const status = JSON.parse(body);
+        status.updatedAt = new Date().toISOString();
+        if (redis) {
+          await redis.set('genie:status', status);
+          // Set TTL of 5 minutes so stale status auto-clears
+          await redis.expire('genie:status', 300);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Static files
   let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   filePath = path.join(__dirname, filePath);

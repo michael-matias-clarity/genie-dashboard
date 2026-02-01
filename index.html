@@ -1556,6 +1556,7 @@
         <button class="desktop-nav-btn active" data-view="tasks" onclick="switchView('tasks')">🪔 Wishes</button>
         <button class="desktop-nav-btn" data-view="recurring" onclick="switchView('recurring')">🔄 Recurring</button>
         <button class="desktop-nav-btn" data-view="history" onclick="switchView('history')">📜 History</button>
+        <button class="desktop-nav-btn" data-view="console" onclick="switchView('console')">🖥️ Console</button>
         <button class="desktop-nav-btn" data-view="stats" onclick="switchView('stats')">📊 Stats</button>
       </div>
       <div class="desktop-filters" id="desktop-type-filter">
@@ -1582,11 +1583,11 @@
     <button class="nav-item active" data-view="tasks" onclick="switchView('tasks')">
       <span class="icon">🪔</span>Wishes
     </button>
-    <button class="nav-item" data-view="recurring" onclick="switchView('recurring')">
-      <span class="icon">🔄</span>Recurring
-    </button>
     <button class="nav-item" data-view="add" onclick="openNewTask()">
       <span class="icon">✨</span>New
+    </button>
+    <button class="nav-item" data-view="console" onclick="switchView('console')">
+      <span class="icon">🖥️</span>Console
     </button>
     <button class="nav-item" data-view="history" onclick="switchView('history')">
       <span class="icon">📜</span>History
@@ -2164,6 +2165,7 @@
           if (currentView === 'stats') renderStats();
           else if (currentView === 'history') renderHistory();
           else if (currentView === 'recurring') renderRecurring();
+          else if (currentView === 'console') renderConsole();
         }
       } else {
         // Mobile: always use task container
@@ -2174,6 +2176,7 @@
         else if (currentView === 'stats') renderStats();
         else if (currentView === 'history') renderHistory();
         else if (currentView === 'recurring') renderRecurring();
+        else if (currentView === 'console') renderConsole();
       }
       
       // Update notification badges
@@ -2843,6 +2846,99 @@
       }
       
       container.innerHTML = html;
+    }
+
+    // Console polling state
+    let consolePollInterval = null;
+    
+    async function renderConsole() {
+      const container = document.getElementById('task-container');
+      container.innerHTML = `
+        <h2 style="margin:0 0 16px;color:var(--accent);">🖥️ Genie Console</h2>
+        <div style="padding:20px;text-align:center;color:var(--text-secondary)">
+          <div class="console-status">Connecting...</div>
+        </div>
+      `;
+      
+      // Start polling
+      if (consolePollInterval) clearInterval(consolePollInterval);
+      pollConsole();
+      consolePollInterval = setInterval(pollConsole, 3000);
+    }
+    
+    async function pollConsole() {
+      if (currentView !== 'console') {
+        if (consolePollInterval) {
+          clearInterval(consolePollInterval);
+          consolePollInterval = null;
+        }
+        return;
+      }
+      
+      try {
+        const res = await fetch('/api/console');
+        const status = await res.json();
+        renderConsoleStatus(status);
+      } catch (e) {
+        renderConsoleStatus({ active: false, error: e.message });
+      }
+    }
+    
+    function renderConsoleStatus(status) {
+      const container = document.getElementById('task-container');
+      const updatedAt = status.updatedAt ? new Date(status.updatedAt).toLocaleString() : 'Never';
+      const isStale = status.updatedAt && (Date.now() - new Date(status.updatedAt).getTime() > 60000);
+      
+      let sessionsHtml = '';
+      if (status.sessions && status.sessions.length > 0) {
+        sessionsHtml = status.sessions.map(s => `
+          <div style="background:var(--bg-card);border-radius:var(--radius-md);padding:16px;margin-bottom:12px;border-left:3px solid ${s.active ? 'var(--success)' : 'var(--text-tertiary)'};">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong style="color:var(--text-primary);">${s.label || s.sessionKey || 'Unknown'}</strong>
+              <span style="font-size:0.75rem;padding:4px 8px;border-radius:12px;background:${s.active ? 'var(--success)' : 'var(--text-tertiary)'};color:black;">
+                ${s.active ? '● Active' : '○ Idle'}
+              </span>
+            </div>
+            ${s.currentTask ? `<div style="color:var(--text-secondary);font-size:0.9rem;">📋 ${s.currentTask}</div>` : ''}
+            ${s.model ? `<div style="color:var(--text-tertiary);font-size:0.8rem;margin-top:4px;">Model: ${s.model}</div>` : ''}
+          </div>
+        `).join('');
+      } else {
+        sessionsHtml = '<div style="color:var(--text-tertiary);text-align:center;padding:20px;">No active sessions</div>';
+      }
+      
+      container.innerHTML = `
+        <h2 style="margin:0 0 16px;color:var(--accent);">🖥️ Genie Console</h2>
+        
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+          <div style="width:12px;height:12px;border-radius:50%;background:${status.active ? 'var(--success)' : isStale ? 'var(--warning)' : 'var(--text-tertiary)'};animation:${status.active ? 'pulse 2s infinite' : 'none'};"></div>
+          <div>
+            <div style="color:var(--text-primary);font-weight:600;">
+              ${status.active ? 'Genie is Working' : isStale ? 'Status Stale' : 'Genie is Idle'}
+            </div>
+            <div style="color:var(--text-tertiary);font-size:0.8rem;">Last update: ${updatedAt}</div>
+          </div>
+        </div>
+        
+        ${status.currentTask ? `
+          <div style="background:var(--accent-dim);border-radius:var(--radius-md);padding:16px;margin-bottom:20px;border:1px solid var(--accent);">
+            <div style="color:var(--accent);font-size:0.8rem;margin-bottom:4px;">Currently Working On</div>
+            <div style="color:var(--text-primary);font-weight:500;">${status.currentTask}</div>
+          </div>
+        ` : ''}
+        
+        <h3 style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:12px;">Sessions</h3>
+        ${sessionsHtml}
+        
+        ${status.error ? `<div style="color:var(--danger);margin-top:12px;">Error: ${status.error}</div>` : ''}
+        
+        <style>
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+          }
+        </style>
+      `;
     }
 
     function renderStats() {
