@@ -16,7 +16,7 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml'
 };
 
-const DEFAULT_DATA = { columns: ['inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [] };
+const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [] };
 
 function loadTasks() {
   try {

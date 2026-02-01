@@ -965,13 +965,14 @@
 
   <script>
     const COLUMNS = {
+      genie: { label: 'Genie', icon: '🧞' },
       inbox: { label: 'Inbox', icon: '📥' },
       todo: { label: 'Queued', icon: '📋' },
       in_progress: { label: 'Granting', icon: '⚡' },
       review: { label: 'Review', icon: '👀' },
       done: { label: 'Granted', icon: '✨' }
     };
-    const COLUMN_ORDER = ['inbox', 'todo', 'in_progress', 'review', 'done'];
+    const COLUMN_ORDER = ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'];
 
     let tasks = [];
     let currentColumn = 'inbox';
@@ -1111,13 +1112,22 @@
 
     function renderTasks() {
       const container = document.getElementById('task-container');
-      const colTasks = tasks.filter(t => t.column === currentColumn && (typeFilter === "all" || (t.type || "single") === typeFilter));
+      // Genie column ignores type filter - shows all ideas
+      const colTasks = tasks.filter(t => t.column === currentColumn && (currentColumn === 'genie' || typeFilter === "all" || (t.type || "single") === typeFilter));
+
+      // Hide type filter for genie column
+      document.getElementById('type-filter').style.display = currentColumn === 'genie' ? 'none' : 'flex';
 
       if (colTasks.length === 0) {
+        const emptyMsg = currentColumn === 'genie' 
+          ? { title: 'No ideas yet', desc: 'Genie is thinking of new suggestions...' }
+          : currentColumn === 'done'
+          ? { title: 'All wishes granted!', desc: 'The genie awaits your command' }
+          : { title: 'No wishes here', desc: 'The genie awaits your command' };
         container.innerHTML = `<div class="empty-state">
           <div class="icon">${COLUMNS[currentColumn].icon}</div>
-          <h3>${currentColumn === 'done' ? 'All wishes granted!' : 'No wishes here'}</h3>
-          <p>The genie awaits your command</p>
+          <h3>${emptyMsg.title}</h3>
+          <p>${emptyMsg.desc}</p>
         </div>`;
         return;
       }
@@ -1207,15 +1217,23 @@
         `).join('');
       }
 
-      // Move buttons
+      // Move buttons - special handling for genie column
       const colIdx = COLUMN_ORDER.indexOf(task.column);
-      const canLeft = colIdx > 0;
+      const canLeft = colIdx > 0 && task.column !== 'inbox'; // Can't go left from inbox (genie is special)
       const canRight = colIdx < COLUMN_ORDER.length - 1;
       
-      document.getElementById('move-actions').innerHTML = `
-        ${canLeft ? `<button class="move-btn" onclick="moveTask('${id}', -1)">← ${COLUMNS[COLUMN_ORDER[colIdx - 1]].label}</button>` : ''}
-        ${canRight ? `<button class="move-btn primary" onclick="moveTask('${id}', 1)">${COLUMNS[COLUMN_ORDER[colIdx + 1]].label} →</button>` : ''}
-      `;
+      if (task.column === 'genie') {
+        // Genie suggestions: Approve or Discard
+        document.getElementById('move-actions').innerHTML = `
+          <button class="move-btn" onclick="discardIdea('${id}')">❌ Discard</button>
+          <button class="move-btn primary" onclick="approveIdea('${id}')">✅ Approve</button>
+        `;
+      } else {
+        document.getElementById('move-actions').innerHTML = `
+          ${canLeft ? `<button class="move-btn" onclick="moveTask('${id}', -1)">← ${COLUMNS[COLUMN_ORDER[colIdx - 1]].label}</button>` : ''}
+          ${canRight ? `<button class="move-btn primary" onclick="moveTask('${id}', 1)">${COLUMNS[COLUMN_ORDER[colIdx + 1]].label} →</button>` : ''}
+        `;
+      }
 
       document.getElementById('view-modal').classList.add('active');
     }
@@ -1253,9 +1271,30 @@
       const newIdx = idx + direction;
       if (newIdx < 0 || newIdx >= COLUMN_ORDER.length) return;
       
-      task.column = COLUMN_ORDER[newIdx]; if (COLUMN_ORDER[newIdx] === "done") { showGrantCelebration(); setTimeout(closeViewModal, 600); }
+      // Skip genie column when moving normally
+      const targetCol = COLUMN_ORDER[newIdx];
+      if (targetCol === 'genie') return;
+      
+      task.column = targetCol; if (targetCol === "done") { showGrantCelebration(); setTimeout(closeViewModal, 600); }
       
       if (viewingTaskId === id) viewTask(id);
+      renderAll();
+      saveTasks();
+    }
+
+    function approveIdea(id) {
+      const task = tasks.find(t => t.id === id);
+      if (!task) return;
+      task.column = 'inbox';
+      closeViewModal();
+      renderAll();
+      saveTasks();
+    }
+
+    function discardIdea(id) {
+      if (!confirm('Discard this idea?')) return;
+      tasks = tasks.filter(t => t.id !== id);
+      closeViewModal();
       renderAll();
       saveTasks();
     }
