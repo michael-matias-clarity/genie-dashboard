@@ -2166,14 +2166,14 @@
       document.querySelectorAll('.desktop-nav-btn').forEach(n => n.classList.toggle('active', n.dataset.view === view));
       // Force scroll to top when switching views
       window.scrollTo(0, 0);
-      const content = document.getElementById('content');
-      if (content) content.scrollTop = 0;
+      const container = document.getElementById('task-container');
+      if (container) container.scrollTop = 0;
       renderAll();
     }
 
     let historyFilter = 'all';
     async function renderHistory() {
-      const container = document.getElementById('content');
+      const container = document.getElementById('task-container');
       container.innerHTML = '<h2 style="margin:0 0 16px;color:var(--accent);">📜 Activity History</h2><div style="padding:20px;text-align:center;color:var(--text-secondary)">Loading...</div>';
       
       try {
