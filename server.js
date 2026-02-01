@@ -8,10 +8,20 @@ const PORT = process.env.PORT || 3456;
 const TASKS_KEY = 'lamp:tasks';
 
 // Initialize Redis client
-const redis = process.env.UPSTASH_REDIS_REST_URL ? new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-}) : null;
+let redis = null;
+const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+if (redisUrl && redisToken) {
+  try {
+    redis = new Redis({ url: redisUrl, token: redisToken });
+    console.log('Redis URL:', redisUrl.substring(0, 30) + '...');
+  } catch (e) {
+    console.error('Redis init error:', e.message);
+  }
+} else {
+  console.log('Redis env vars missing:', { url: !!redisUrl, token: !!redisToken });
+}
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -39,17 +49,23 @@ async function getTasks() {
     try {
       console.log('Loading tasks from Redis...');
       let data = await redis.get(TASKS_KEY);
+      console.log('Redis response type:', typeof data);
+      console.log('Redis response preview:', JSON.stringify(data)?.substring(0, 100));
+      
       // Handle string data (from REST API storage)
       if (typeof data === 'string') {
+        console.log('Parsing string data...');
         data = JSON.parse(data);
       }
       if (data && data.tasks && data.tasks.length > 0) {
         tasksCache = data;
         console.log(`✓ Loaded ${data.tasks.length} tasks from Redis`);
         return data;
+      } else {
+        console.log('Redis data empty or invalid:', { hasTasks: !!data?.tasks, length: data?.tasks?.length });
       }
     } catch (e) {
-      console.error('Redis GET error:', e.message);
+      console.error('Redis GET error:', e.message, e.stack);
     }
   }
   
