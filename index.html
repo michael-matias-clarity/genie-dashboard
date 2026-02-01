@@ -1217,7 +1217,7 @@
       const newIdx = idx + direction;
       if (newIdx < 0 || newIdx >= COLUMN_ORDER.length) return;
       
-      task.column = COLUMN_ORDER[newIdx]; if (COLUMN_ORDER[newIdx] === "done") { showGrantCelebration(); setTimeout(closeViewModal, 600); } if (COLUMN_ORDER[newIdx] === "done") closeViewModal();
+      task.column = COLUMN_ORDER[newIdx]; if (COLUMN_ORDER[newIdx] === "done") { showGrantCelebration(); setTimeout(closeViewModal, 600); }
       
       if (viewingTaskId === id) viewTask(id);
       renderAll();
