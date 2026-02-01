@@ -1742,7 +1742,7 @@
       if (!container) return;
       
       // Order: Inbox, To Do, In Progress, Review (skip Genie and Done for main Kanban view, add as last columns)
-      const kanbanColumns = ['inbox', 'todo', 'in_progress', 'review', 'genie', 'done'];
+      const kanbanColumns = ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'];
       
       container.innerHTML = kanbanColumns.map(col => {
         let colTasks = tasks.filter(t => t.column === col);
