@@ -52,8 +52,13 @@
       font-family: var(--font-sans);
       background: var(--bg-primary);
       color: var(--text-primary);
-      min-height: auto;
+      min-height: 100vh;
       overflow-x: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
     }
 
     /* === HEADER === */
@@ -246,6 +251,7 @@
       padding-bottom: calc(80px + var(--safe-bottom));
       max-width: 800px;
       margin: 0 auto;
+      flex: 1;
     }
 
     /* === TASK CARD - Description prominent === */
@@ -789,6 +795,7 @@
         gap: 8px;
         padding: 16px 0;
         backdrop-filter: none;
+        margin-top: auto;
       }
       .bottom-nav .nav-item {
         flex-direction: row;
@@ -803,7 +810,9 @@
       
       .task-container { 
         padding-bottom: 40px; 
-        max-width: 1200px; 
+        max-width: 1200px;
+        flex: 1;
+        min-height: 0;
       }
       
       /* Wider cards on desktop */
