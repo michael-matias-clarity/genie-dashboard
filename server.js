@@ -5,7 +5,8 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3456;
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
-const GIST_URL = 'https://gist.githubusercontent.com/michael-matias-clarity/efa1580eefda602e38d5517799c7e84e/raw/tasks.json';
+// Use Gist API instead of raw URL (raw URL has aggressive caching)
+const GIST_API_URL = 'https://api.github.com/gists/efa1580eefda602e38d5517799c7e84e';
 const REFRESH_INTERVAL = 5 * 60 * 1000; // Refresh from gist every 5 minutes
 
 const MIME_TYPES = {
@@ -41,16 +42,30 @@ function saveTasksToFile(data) {
   }
 }
 
-// Fetch from Gist (cloud backup - source of truth)
+// Fetch from Gist API (no caching issues unlike raw URL)
 function fetchFromGist() {
   return new Promise((resolve, reject) => {
-    const url = GIST_URL + '?t=' + Date.now(); // Cache bust
-    https.get(url, (res) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: '/gists/efa1580eefda602e38d5517799c7e84e',
+      headers: {
+        'User-Agent': 'Genie-Dashboard',
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    };
+    
+    https.get(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
-          const parsed = JSON.parse(data);
+          const gist = JSON.parse(data);
+          const content = gist.files?.['tasks.json']?.content;
+          if (!content) {
+            reject(new Error('No tasks.json in gist'));
+            return;
+          }
+          const parsed = JSON.parse(content);
           if (parsed.tasks && Array.isArray(parsed.tasks)) {
             resolve(parsed);
           } else {
