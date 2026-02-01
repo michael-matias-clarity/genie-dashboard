@@ -1545,7 +1545,6 @@
   <div class="type-filter" id="type-filter">
     <button class="filter-btn" data-filter="all" onclick="setTypeFilter('all')">All</button>
     <button class="filter-btn active" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
-    <button class="filter-btn" data-filter="recurring" onclick="setTypeFilter('recurring')">🔄 Recurring</button>
     <button class="filter-btn" data-filter="laptop" onclick="setTypeFilter('laptop')">💻 Laptop</button>
     <button class="filter-btn" data-filter="mobile" onclick="setTypeFilter('mobile')">📱 Mobile</button>
   </div>
@@ -1555,6 +1554,7 @@
     <div class="desktop-controls-inner">
       <div class="desktop-nav">
         <button class="desktop-nav-btn active" data-view="tasks" onclick="switchView('tasks')">🪔 Wishes</button>
+        <button class="desktop-nav-btn" data-view="recurring" onclick="switchView('recurring')">🔄 Recurring</button>
         <button class="desktop-nav-btn" data-view="history" onclick="switchView('history')">📜 History</button>
         <button class="desktop-nav-btn" data-view="stats" onclick="switchView('stats')">📊 Stats</button>
       </div>
@@ -1562,7 +1562,6 @@
         <span class="filter-label">Filter:</span>
         <button class="desktop-filter-btn" data-filter="all" onclick="setTypeFilter('all')">All</button>
         <button class="desktop-filter-btn active" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
-        <button class="desktop-filter-btn" data-filter="recurring" onclick="setTypeFilter('recurring')">🔄 Recurring</button>
         <button class="desktop-filter-btn" data-filter="laptop" onclick="setTypeFilter('laptop')">💻 Laptop</button>
         <button class="desktop-filter-btn" data-filter="mobile" onclick="setTypeFilter('mobile')">📱 Mobile</button>
       </div>
@@ -1579,20 +1578,15 @@
   <div class="kanban-container" id="kanban-container"></div>
   
   <!-- Recurring Tasks Panel (Desktop only) -->
-  <div class="recurring-panel" id="recurring-panel">
-    <div class="recurring-header">🔄 Recurring</div>
-    <div class="recurring-tasks" id="recurring-tasks"></div>
-  </div>
-
   <nav class="bottom-nav">
     <button class="nav-item active" data-view="tasks" onclick="switchView('tasks')">
       <span class="icon">🪔</span>Wishes
     </button>
+    <button class="nav-item" data-view="recurring" onclick="switchView('recurring')">
+      <span class="icon">🔄</span>Recurring
+    </button>
     <button class="nav-item" data-view="add" onclick="openNewTask()">
       <span class="icon">✨</span>New
-    </button>
-    <button class="nav-item" data-view="feedback" onclick="openLampFeedback()">
-      <span class="icon">🐛</span>Lamp
     </button>
     <button class="nav-item" data-view="history" onclick="switchView('history')">
       <span class="icon">📜</span>History
@@ -2002,8 +1996,10 @@
     function renderTasks() {
       const container = document.getElementById('task-container');
       // Genie column ignores type filter - shows all ideas
+      // Recurring tasks are excluded - they have their own dedicated page
       let colTasks = tasks.filter(t => {
         if (t.column !== currentColumn) return false;
+        if (t.type === 'recurring') return false; // Recurring has its own page
         if (currentColumn === 'genie') return true;
         if (typeFilter === 'laptop') return t.needsLaptop;
         if (typeFilter === 'mobile') return t.needsMobile;
@@ -2080,15 +2076,12 @@
       const container = document.getElementById('kanban-container');
       if (!container) return;
       
-      // Render recurring panel separately
-      renderRecurring();
-      
       // Order: Inbox, To Do, In Progress, Review (skip Genie and Done for main Kanban view, add as last columns)
       const kanbanColumns = ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'];
       
       container.innerHTML = kanbanColumns.map(col => {
-        // Filter out recurring tasks from main board unless filtering by recurring
-        let colTasks = tasks.filter(t => t.column === col && (typeFilter === 'recurring' || t.type !== 'recurring'));
+        // Filter out recurring tasks - they have their own dedicated page
+        let colTasks = tasks.filter(t => t.column === col && t.type !== 'recurring');
         
         // Apply type filter (except for genie)
         if (col !== 'genie' && typeFilter !== 'all') {
@@ -2170,6 +2163,7 @@
           taskEl.style.display = 'block';
           if (currentView === 'stats') renderStats();
           else if (currentView === 'history') renderHistory();
+          else if (currentView === 'recurring') renderRecurring();
         }
       } else {
         // Mobile: always use task container
@@ -2179,6 +2173,7 @@
         if (currentView === 'tasks') renderTasks();
         else if (currentView === 'stats') renderStats();
         else if (currentView === 'history') renderHistory();
+        else if (currentView === 'recurring') renderRecurring();
       }
       
       // Update notification badges
@@ -2331,33 +2326,6 @@
         }).join('');
       } catch (e) {
         changelogDiv.innerHTML = '<span style="color:var(--text-tertiary);font-size:0.8rem;">Could not load changelog</span>';
-      }
-    }
-
-    function renderRecurring() {
-      const panel = document.getElementById('recurring-panel');
-      const container = document.getElementById('recurring-tasks');
-      if (!panel || !container) return;
-      
-      // Hide panel when filtering by recurring (they show in main board)
-      if (typeFilter === 'recurring') {
-        panel.style.display = 'none';
-        return;
-      } else {
-        panel.style.display = '';
-      }
-      
-      const recurringTasks = tasks.filter(t => t.type === 'recurring');
-      
-      if (recurringTasks.length === 0) {
-        container.innerHTML = '<div style="color:var(--text-tertiary);font-size:0.8rem;">No recurring tasks</div>';
-      } else {
-        container.innerHTML = recurringTasks.map(task => `
-          <div class="recurring-task" onclick="viewTask('${task.id}')">
-            <div class="recurring-task-title">${task.title}</div>
-            <div class="recurring-task-status">${COLUMNS[task.column].icon} ${COLUMNS[task.column].label}</div>
-          </div>
-        `).join('');
       }
     }
 
@@ -2807,6 +2775,74 @@
     function setHistoryFilter(f) {
       historyFilter = f;
       renderHistory();
+    }
+
+    function renderRecurring() {
+      const container = document.getElementById('task-container');
+      const recurringTasks = tasks.filter(t => t.type === 'recurring');
+      
+      let html = `
+        <h2 style="margin:0 0 20px;color:var(--accent);display:flex;align-items:center;gap:10px;">
+          🔄 Recurring Tasks
+          <span style="font-size:0.7em;color:var(--text-secondary);font-weight:normal;">(${recurringTasks.length} tasks)</span>
+        </h2>
+      `;
+      
+      if (recurringTasks.length === 0) {
+        html += `
+          <div style="padding:40px 20px;text-align:center;color:var(--text-tertiary);">
+            <div style="font-size:3rem;margin-bottom:16px;">🔄</div>
+            <p>No recurring tasks yet</p>
+            <p style="font-size:0.85rem;margin-top:8px;">Create a task with type "Recurring" to see it here</p>
+          </div>
+        `;
+      } else {
+        html += '<div style="display:grid;gap:12px;">';
+        
+        recurringTasks.forEach(task => {
+          const statusColor = {
+            'genie': 'var(--purple)',
+            'inbox': 'var(--info)',
+            'todo': 'var(--warning)',
+            'in_progress': 'var(--accent)',
+            'review': 'var(--success)',
+            'done': 'var(--text-tertiary)'
+          }[task.column] || 'var(--text-secondary)';
+          
+          const statusLabel = {
+            'genie': '💡 Idea',
+            'inbox': '📥 Inbox',
+            'todo': '📋 To Do',
+            'in_progress': '🔨 In Progress',
+            'review': '👀 Review',
+            'done': '✅ Done'
+          }[task.column] || task.column;
+          
+          html += `
+            <div class="task-card" onclick="viewTask('${task.id}')" style="cursor:pointer;padding:16px;background:var(--bg-card);border-radius:var(--radius-md);border:1px solid var(--border);">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                <div style="flex:1;">
+                  <div style="font-weight:600;margin-bottom:6px;">${task.title}</div>
+                  <div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.5;">${task.description ? task.description.substring(0, 150) + (task.description.length > 150 ? '...' : '') : 'No description'}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                  <span style="font-size:0.75rem;padding:4px 8px;border-radius:var(--radius-sm);background:${statusColor}20;color:${statusColor};">${statusLabel}</span>
+                  ${task.priority ? `<span style="font-size:0.7rem;color:var(--text-tertiary);">Priority: ${task.priority}</span>` : ''}
+                </div>
+              </div>
+              ${task.comments && task.comments.length > 0 ? `
+                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:0.8rem;color:var(--text-tertiary);">
+                  💬 ${task.comments.length} comment${task.comments.length !== 1 ? 's' : ''}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        });
+        
+        html += '</div>';
+      }
+      
+      container.innerHTML = html;
     }
 
     function renderStats() {
