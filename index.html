@@ -7,6 +7,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#000000">
   <title>The Lamp</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪔</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪔</text></svg>">
   <link rel="manifest" href="/manifest.json">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -778,8 +780,65 @@
     .stat-card .value.success { color: var(--success); }
 
     @media (min-width: 1024px) {
-      .bottom-nav { display: none; }
-      .task-container { padding-bottom: 40px; max-width: 900px; }
+      /* Desktop: Better layout */
+      .bottom-nav { 
+        position: static;
+        background: transparent;
+        border: none;
+        justify-content: center;
+        gap: 8px;
+        padding: 16px 0;
+        backdrop-filter: none;
+      }
+      .bottom-nav .nav-item {
+        flex-direction: row;
+        gap: 6px;
+        padding: 10px 20px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius);
+        font-size: 0.85rem;
+      }
+      .bottom-nav .nav-item .icon { font-size: 1rem; }
+      .bottom-nav .nav-item.active { background: var(--accent); color: black; }
+      
+      .task-container { 
+        padding-bottom: 40px; 
+        max-width: 1200px; 
+      }
+      
+      /* Wider cards on desktop */
+      .task-card {
+        padding: 20px 24px;
+      }
+      .task-title { font-size: 1.1rem; }
+      .task-description { font-size: 0.95rem; }
+      
+      /* Desktop column tabs as pills */
+      .mission-tabs {
+        gap: 8px;
+        margin: 0 auto 20px;
+        max-width: 1200px;
+      }
+      .tab {
+        padding: 10px 24px;
+        font-size: 0.9rem;
+      }
+      
+      /* Quick add wider */
+      .quick-add-inner {
+        max-width: 800px;
+      }
+      
+      /* Header more prominent */
+      header h1 { font-size: 2rem; }
+      
+      /* Better modal on desktop */
+      .modal-sheet {
+        max-width: 700px;
+        margin: 60px auto;
+        border-radius: var(--radius-lg);
+        max-height: calc(100vh - 120px);
+      }
     }
 
     /* === ANIMATIONS === */
@@ -1703,6 +1762,25 @@
         btn.textContent = '🎤';
       }
     }
+
+    // Keyboard shortcuts (desktop)
+    document.addEventListener('keydown', (e) => {
+      // Ignore if typing in input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      switch(e.key) {
+        case 'n': openNewTask(); break;
+        case 'h': switchView('history'); break;
+        case 's': switchView('stats'); break;
+        case 't': switchView('tasks'); break;
+        case 'Escape': closeViewModal(); closeEditModal(); break;
+        case '1': selectColumn('inbox'); break;
+        case '2': selectColumn('in_progress'); break;
+        case '3': selectColumn('review'); break;
+        case '4': selectColumn('done'); break;
+        case '5': selectColumn('genie'); break;
+      }
+    });
 
     loadTasks();
     setInterval(loadTasks, 30000);
