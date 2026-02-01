@@ -784,8 +784,8 @@
   <nav class="mission-tabs" id="tabs"></nav>
 
   <div class="type-filter" id="type-filter">
-    <button class="filter-btn active" data-filter="all" onclick="setTypeFilter('all')">All</button>
-    <button class="filter-btn" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
+    <button class="filter-btn" data-filter="all" onclick="setTypeFilter('all')">All</button>
+    <button class="filter-btn active" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
     <button class="filter-btn" data-filter="recurring" onclick="setTypeFilter('recurring')">🔄 Recurring</button>
   </div>
 
@@ -920,7 +920,7 @@
     let viewingTaskId = null;
     let editingTaskId = null;
     let currentView = 'tasks';
-    let typeFilter = 'all';
+    let typeFilter = 'single';
 
     function setTypeFilter(filter) {
       typeFilter = filter;
