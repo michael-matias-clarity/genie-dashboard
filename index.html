@@ -1136,7 +1136,7 @@
           <div class="task-desc-preview ${isShort ? 'short' : ''}">${desc}</div>
           <div class="task-footer">
             <span>${task.created}</span>
-            `${(() => { const unread = getUnreadGenieComments(task); return unread > 0 ? `<span class="unread-badge">🧞 ${unread}</span>` : ""; })()}${commentCount > 0 ? `<span class="comments-count">💬 ${commentCount}</span>` : ""}`
+            ${(() => { const unread = getUnreadGenieComments(task); return unread > 0 ? `<span class="unread-badge">🧞 ${unread}</span>` : ""; })()}${commentCount > 0 ? `<span class="comments-count">💬 ${commentCount}</span>` : ""}
           </div>
         </div>`;
       }).join('');
