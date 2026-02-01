@@ -939,6 +939,11 @@
         font-size: 1.25rem;
         font-weight: 600;
       }
+      .edit-modal .edit-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 28px;
+      }
       .edit-modal .modal-close {
         background: var(--bg-secondary);
         border: 1px solid var(--border);
@@ -954,11 +959,7 @@
         border-color: var(--border-light);
       }
       .edit-modal .form-group {
-        padding: 0 28px;
         margin-bottom: 20px;
-      }
-      .edit-modal .form-group:first-of-type {
-        padding-top: 28px;
       }
       .edit-modal .form-group label {
         font-size: 0.8rem;
@@ -1576,48 +1577,50 @@
         <button class="modal-close" onclick="closeEditModal()">Cancel</button>
       </div>
       
-      <div class="form-group">
-        <label>Title</label>
-        <input type="text" id="task-title" placeholder="What do you wish for?">
-      </div>
-      
-      <div class="form-group">
-        <label>Description <span class="hint">— What needs to happen</span></label>
-        <textarea id="task-desc" class="large" placeholder="Describe what this wish accomplishes..."></textarea>
-      </div>
+      <div class="edit-body">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="task-title" placeholder="What do you wish for?">
+        </div>
+        
+        <div class="form-group">
+          <label>Description <span class="hint">— What needs to happen</span></label>
+          <textarea id="task-desc" class="large" placeholder="Describe what this wish accomplishes..."></textarea>
+        </div>
 
-      <div class="form-group">
-        <label>📷 Image <span class="hint">— Optional attachment</span></label>
-        <input type="file" id="task-image" accept="image/*" onchange="previewImage(this)" style="display:none">
-        <div id="image-preview" style="margin-top:8px"></div>
-        <button type="button" onclick="document.getElementById('task-image').click()" style="padding:10px 16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);cursor:pointer">📷 Add Image</button>
-      </div>
+        <div class="form-group">
+          <label>📷 Image <span class="hint">— Optional attachment</span></label>
+          <input type="file" id="task-image" accept="image/*" onchange="previewImage(this)" style="display:none">
+          <div id="image-preview" style="margin-top:8px"></div>
+          <button type="button" onclick="document.getElementById('task-image').click()" style="padding:10px 16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);cursor:pointer">📷 Add Image</button>
+        </div>
 
-      <div class="form-group">
-        <label>Success Criteria <span class="hint">— How do we know it's done?</span></label>
-        <textarea id="task-criteria" placeholder="• Criterion 1&#10;• Criterion 2&#10;• Criterion 3"></textarea>
-      </div>
+        <div class="form-group">
+          <label>Success Criteria <span class="hint">— How do we know it's done?</span></label>
+          <textarea id="task-criteria" placeholder="• Criterion 1&#10;• Criterion 2&#10;• Criterion 3"></textarea>
+        </div>
 
-      <div class="form-group">
-        <label>User Journey <span class="hint">— Example scenario where this matters</span></label>
-        <textarea id="task-journey" placeholder="When [user] wants to [action], they can now [benefit]..."></textarea>
-      </div>
-      
-      <div class="form-group">
-        <label>Priority</label>
-        <select id="task-priority">
-          <option value="high">🔴 Critical</option>
-          <option value="medium">🟡 Standard</option>
-          <option value="low">🟢 Low</option>
-        </select>
-      </div>
-      
-      <div class="form-group">
-        <label>Type</label>
-        <select id="task-type">
-          <option value="single">📌 One-time</option>
-          <option value="recurring">🔄 Recurring</option>
-        </select>
+        <div class="form-group">
+          <label>User Journey <span class="hint">— Example scenario where this matters</span></label>
+          <textarea id="task-journey" placeholder="When [user] wants to [action], they can now [benefit]..."></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="task-priority">
+            <option value="high">🔴 Critical</option>
+            <option value="medium">🟡 Standard</option>
+            <option value="low">🟢 Low</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label>Type</label>
+          <select id="task-type">
+            <option value="single">📌 One-time</option>
+            <option value="recurring">🔄 Recurring</option>
+          </select>
+        </div>
       </div>
       
       <div class="edit-actions">
