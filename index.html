@@ -1561,6 +1561,77 @@
       return task.comments.filter(c => c.author === "genie" && new Date(c.time).getTime() > seenAt).length;
     }
     
+    // Get total unread count across all tasks
+    function getTotalUnreadCount() {
+      return tasks.reduce((sum, task) => sum + getUnreadGenieComments(task), 0);
+    }
+    
+    // Update favicon with unread badge
+    function updateFaviconBadge(count) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      
+      // Draw lamp emoji
+      ctx.font = '48px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🪔', 32, 32);
+      
+      // Draw badge if count > 0
+      if (count > 0) {
+        ctx.fillStyle = '#ff453a';
+        ctx.beginPath();
+        ctx.arc(52, 12, 12, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText(count > 9 ? '9+' : count.toString(), 52, 13);
+      }
+      
+      // Update favicon
+      let link = document.querySelector("link[rel*='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = canvas.toDataURL();
+      
+      // Also update page title
+      document.title = count > 0 ? `(${count}) The Lamp` : 'The Lamp';
+    }
+    
+    // Update nav notification dot
+    function updateNavNotification(count) {
+      const wishesBtn = document.querySelector('.nav-item[data-view="tasks"]');
+      const desktopWishesBtn = document.querySelector('.desktop-nav-btn[data-view="tasks"]');
+      
+      // Remove existing badges
+      document.querySelectorAll('.nav-badge').forEach(b => b.remove());
+      
+      if (count > 0) {
+        const badge = `<span class="nav-badge" style="position:absolute;top:-4px;right:-4px;background:#ff453a;color:white;font-size:10px;padding:2px 5px;border-radius:10px;font-weight:bold;">${count > 9 ? '9+' : count}</span>`;
+        if (wishesBtn) {
+          wishesBtn.style.position = 'relative';
+          wishesBtn.insertAdjacentHTML('beforeend', badge);
+        }
+        if (desktopWishesBtn) {
+          desktopWishesBtn.style.position = 'relative';
+          desktopWishesBtn.insertAdjacentHTML('beforeend', badge);
+        }
+      }
+    }
+    
+    // Call this after rendering
+    function updateNotifications() {
+      const count = getTotalUnreadCount();
+      updateFaviconBadge(count);
+      updateNavNotification(count);
+    }
+    
     // Make URLs clickable in text (XSS-safe)
     function linkify(text) {
       if (!text) return '';
@@ -1850,6 +1921,9 @@
         else if (currentView === 'stats') renderStats();
         else if (currentView === 'history') renderHistory();
       }
+      
+      // Update notification badges
+      updateNotifications();
     }
 
     function selectColumn(col) {
