@@ -26,12 +26,17 @@ let tasksCache = null;
 async function redisGet(key) {
   if (!UPSTASH_URL || !UPSTASH_TOKEN) return null;
   
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const url = new URL(`${UPSTASH_URL}/get/${key}`);
     
-    https.get(url, {
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'GET',
       headers: { 'Authorization': `Bearer ${UPSTASH_TOKEN}` }
-    }, (res) => {
+    };
+    
+    const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -40,13 +45,22 @@ async function redisGet(key) {
           if (result.result) {
             resolve(JSON.parse(result.result));
           } else {
+            console.log('Redis GET: no result in response');
             resolve(null);
           }
         } catch (e) {
+          console.error('Redis GET parse error:', e.message);
           resolve(null);
         }
       });
-    }).on('error', () => resolve(null));
+    });
+    
+    req.on('error', (e) => {
+      console.error('Redis GET error:', e.message);
+      resolve(null);
+    });
+    
+    req.end();
   });
 }
 
@@ -342,4 +356,3 @@ Running at: http://localhost:${PORT}
     `);
   });
 });
-// Cache bust: 1769911077
