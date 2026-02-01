@@ -858,6 +858,9 @@
     <button class="nav-item" data-view="add" onclick="openNewTask()">
       <span class="icon">✨</span>New
     </button>
+    <button class="nav-item" data-view="feedback" onclick="openLampFeedback()">
+      <span class="icon">🐛</span>Lamp
+    </button>
     <button class="nav-item" data-view="history" onclick="switchView('history')">
       <span class="icon">📜</span>History
     </button>
@@ -1418,6 +1421,19 @@
       document.getElementById('edit-title').textContent = 'New Wish';
       document.getElementById('task-title').value = '';
       document.getElementById('task-desc').value = '';
+      document.getElementById('task-criteria').value = '';
+      document.getElementById('task-journey').value = '';
+      document.getElementById('task-priority').value = 'medium';
+      document.getElementById('task-type').value = 'single';
+      document.getElementById('delete-btn').style.display = 'none';
+      document.getElementById('edit-modal').classList.add('active');
+    }
+
+    function openLampFeedback() {
+      editingTaskId = null;
+      document.getElementById('edit-title').textContent = '🐛 Lamp Feedback';
+      document.getElementById('task-title').value = '[LAMP] ';
+      document.getElementById('task-desc').value = 'Feature or bug for The Lamp dashboard:\n\n';
       document.getElementById('task-criteria').value = '';
       document.getElementById('task-journey').value = '';
       document.getElementById('task-priority').value = 'medium';
