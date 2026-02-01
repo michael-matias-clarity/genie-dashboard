@@ -2000,7 +2000,9 @@
       if (!task) return;
       
       viewingTaskId = id;
-      task.seenAt = Date.now(); saveTasks();
+      task.seenAt = Date.now();
+      renderAll(); // Update task cards immediately to clear unread badge
+      saveTasks();
       document.getElementById('view-title').textContent = task.title;
       document.getElementById('view-desc').innerHTML = linkify(task.description) || 'No description provided';
       
