@@ -2495,8 +2495,18 @@
           const data = await res.json();
           
           if (data.text) {
-            document.getElementById('quick-input').value = data.text;
             btn.textContent = '🎤';
+            // If long text, open modal to show full transcription
+            if (data.text.length > 80) {
+              openNewTask();
+              setTimeout(() => {
+                document.getElementById('edit-title-input').value = '';
+                document.getElementById('edit-desc').value = data.text;
+                document.getElementById('edit-desc').style.minHeight = '200px';
+              }, 100);
+            } else {
+              document.getElementById('quick-input').value = data.text;
+            }
           } else {
             alert(data.error || 'Could not transcribe audio.');
             btn.textContent = '🎤';
