@@ -1443,6 +1443,13 @@
       <div class="view-section">
         <div class="view-meta" id="view-meta"></div>
       </div>
+      
+      <div class="view-section" id="changelog-section">
+        <details class="changelog-details">
+          <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.85rem;padding:8px 0;">📋 View Change Log</summary>
+          <div id="task-changelog" style="margin-top:12px;"></div>
+        </details>
+      </div>
 
       <div class="view-section" id="celebration-image" style="display:none"></div>
 
@@ -2025,7 +2032,44 @@
         `;
       }
 
+      // Load changelog for this task
+      loadTaskChangelog(id);
+
       document.getElementById('view-modal').classList.add('active');
+    }
+    
+    async function loadTaskChangelog(taskId) {
+      const changelogDiv = document.getElementById('task-changelog');
+      changelogDiv.innerHTML = '<span style="color:var(--text-tertiary);font-size:0.8rem;">Loading...</span>';
+      
+      try {
+        const res = await fetch('/api/history?limit=50');
+        const history = await res.json();
+        
+        // Filter history for this task
+        const taskHistory = history.filter(h => h.taskId === taskId || h.taskTitle === tasks.find(t => t.id === taskId)?.title);
+        
+        if (taskHistory.length === 0) {
+          changelogDiv.innerHTML = '<span style="color:var(--text-tertiary);font-size:0.8rem;">No changes recorded yet</span>';
+          return;
+        }
+        
+        changelogDiv.innerHTML = taskHistory.map(h => {
+          const time = new Date(h.time).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          const icon = h.type === 'add' ? '✨' : h.type === 'move' ? '→' : h.type === 'comment' ? '💬' : '•';
+          const authorIcon = h.author === 'genie' ? '🧞' : '👤';
+          let desc = '';
+          if (h.type === 'add') desc = 'Created';
+          else if (h.type === 'move') desc = `Moved ${h.from} → ${h.to}`;
+          else if (h.type === 'comment') desc = 'Commented';
+          
+          return `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">
+            <span>${icon}</span> ${desc} <span style="color:var(--text-tertiary)">• ${authorIcon} ${h.author} • ${time}</span>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        changelogDiv.innerHTML = '<span style="color:var(--text-tertiary);font-size:0.8rem;">Could not load changelog</span>';
+      }
     }
 
     function closeViewModal() {
