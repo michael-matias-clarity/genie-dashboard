@@ -1132,7 +1132,7 @@
     function renderTasks() {
       const container = document.getElementById('task-container');
       // Genie column ignores type filter - shows all ideas
-      const colTasks = tasks.filter(t => {
+      let colTasks = tasks.filter(t => {
         if (t.column !== currentColumn) return false;
         if (currentColumn === 'genie') return true;
         if (typeFilter === 'laptop') return t.needsLaptop;
@@ -1141,6 +1141,23 @@
         if (typeFilter === 'all') return true;
         return (t.type || 'single') === typeFilter;
       });
+      
+      // Sort based on column
+      if (currentColumn === 'done') {
+        // Granted: newest first (by id which is timestamp, or created date)
+        colTasks.sort((a, b) => {
+          const aTime = parseInt(a.id) || new Date(a.created).getTime() || 0;
+          const bTime = parseInt(b.id) || new Date(b.created).getTime() || 0;
+          return bTime - aTime; // descending (newest first)
+        });
+      } else if (currentColumn === 'review') {
+        // Review: oldest updates first (tasks waiting longest get attention)
+        colTasks.sort((a, b) => {
+          const aLast = a.comments?.length ? new Date(a.comments[a.comments.length-1].time).getTime() : (parseInt(a.id) || new Date(a.created).getTime() || 0);
+          const bLast = b.comments?.length ? new Date(b.comments[b.comments.length-1].time).getTime() : (parseInt(b.id) || new Date(b.created).getTime() || 0);
+          return aLast - bLast; // ascending (oldest first)
+        });
+      }
 
       // Hide type filter for genie column
       document.getElementById('type-filter').style.display = currentColumn === 'genie' ? 'none' : 'flex';
