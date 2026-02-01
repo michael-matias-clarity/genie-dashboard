@@ -1130,6 +1130,8 @@
         if (t.column !== currentColumn) return false;
         if (currentColumn === 'genie') return true;
         if (typeFilter === 'laptop') return t.needsLaptop;
+        // Hide laptop-only tasks unless laptop filter is active
+        if (t.needsLaptop && typeFilter !== 'laptop') return false;
         if (typeFilter === 'all') return true;
         return (t.type || 'single') === typeFilter;
       });
@@ -1510,6 +1512,18 @@
 
     document.getElementById('comment-input').addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addComment(); }
+    });
+    
+    // Hide footer when typing comment (mobile keyboard issue)
+    const commentInput = document.getElementById('comment-input');
+    const moveActions = document.querySelector('.move-actions');
+    commentInput.addEventListener('focus', () => {
+      if (moveActions) moveActions.style.display = 'none';
+      // Scroll input into view after a short delay for keyboard
+      setTimeout(() => commentInput.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    });
+    commentInput.addEventListener('blur', () => {
+      if (moveActions) moveActions.style.display = 'flex';
     });
 
     loadTasks();
