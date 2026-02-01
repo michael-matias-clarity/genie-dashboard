@@ -23,6 +23,7 @@ const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'revie
 // In-memory cache (source of truth while server is running)
 let tasksCache = null;
 let lastGistFetch = 0;
+let lastLocalSave = 0; // Track when we last saved locally
 
 function loadTasksFromFile() {
   try {
@@ -116,6 +117,7 @@ async function getTasks() {
 function saveTasks(data) {
   if (!data || !data.tasks) return;
   tasksCache = data;
+  lastLocalSave = Date.now(); // Mark that we just saved locally
   saveTasksToFile(data);
   console.log(`[${new Date().toLocaleTimeString()}] Saved ${data.tasks.length} tasks`);
 }
@@ -195,8 +197,15 @@ Starting up...
     }
   }
   
-  // Periodic refresh from gist
+  // Periodic refresh from gist (but skip if there were recent local saves)
   setInterval(async () => {
+    const timeSinceLastSave = Date.now() - lastLocalSave;
+    // Skip refresh if there was a local save in the last 10 minutes
+    if (lastLocalSave > 0 && timeSinceLastSave < 10 * 60 * 1000) {
+      console.log(`[${new Date().toLocaleTimeString()}] Skipping gist refresh (local save ${Math.round(timeSinceLastSave/1000)}s ago)`);
+      return;
+    }
+    
     try {
       const gistData = await fetchFromGist();
       if (gistData.tasks.length > 0) {
