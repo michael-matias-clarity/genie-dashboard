@@ -6,8 +6,15 @@ const PORT = process.env.PORT || 3456;
 
 // Supabase configuration (primary data store)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://yjvecmrsfivmgfnikxsc.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 const SERVICE_NAME = process.env.SERVICE_NAME || 'unknown';
+
+// Fail fast if Supabase not configured
+if (!SUPABASE_KEY) {
+  console.error('❌ FATAL: SUPABASE_ANON_KEY environment variable is required');
+  console.error('   Set it in your Render environment variables');
+  process.exit(1);
+}
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -19,6 +26,63 @@ const MIME_TYPES = {
 };
 
 const COLUMNS = ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'];
+
+// ============ VALIDATION HELPERS ============
+
+function sanitizeId(id) {
+  // Only allow alphanumeric, dash, underscore
+  if (!id || typeof id !== 'string') return null;
+  const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  return sanitized.length > 0 && sanitized.length <= 50 ? sanitized : null;
+}
+
+function validateTask(task) {
+  const errors = [];
+  
+  if (!task) {
+    return { valid: false, errors: ['Task is required'] };
+  }
+  
+  if (!task.title || typeof task.title !== 'string' || task.title.trim().length === 0) {
+    errors.push('Title is required and must be non-empty');
+  }
+  
+  if (task.title && task.title.length > 500) {
+    errors.push('Title must be 500 characters or less');
+  }
+  
+  if (task.column && !COLUMNS.includes(task.column)) {
+    errors.push(`Invalid column: ${task.column}`);
+  }
+  
+  if (task.priority && !['low', 'medium', 'high'].includes(task.priority)) {
+    errors.push(`Invalid priority: ${task.priority}`);
+  }
+  
+  if (task.type && !['single', 'recurring'].includes(task.type)) {
+    errors.push(`Invalid type: ${task.type}`);
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
+
+function validateComment(comment) {
+  const errors = [];
+  
+  if (!comment) {
+    return { valid: false, errors: ['Comment is required'] };
+  }
+  
+  if (!comment.text || typeof comment.text !== 'string' || comment.text.trim().length === 0) {
+    errors.push('Comment text is required');
+  }
+  
+  if (!comment.author || typeof comment.author !== 'string') {
+    errors.push('Comment author is required');
+  }
+  
+  return { valid: errors.length === 0, errors };
+}
 
 // ============ SUPABASE HELPERS ============
 
@@ -171,8 +235,12 @@ async function addTask(task) {
 }
 
 async function updateTask(taskId, updates, author = 'unknown') {
+  // Sanitize taskId
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
+  
   // Get current task for audit
-  const [current] = await supabaseQuery(`tasks?id=eq.${taskId}&select=column_name,title`);
+  const [current] = await supabaseQuery(`tasks?id=eq.${safeId}&select=column_name,title`);
   
   const payload = {};
   if (updates.title !== undefined) payload.title = updates.title;
@@ -187,7 +255,7 @@ async function updateTask(taskId, updates, author = 'unknown') {
   
   payload.updated_at = new Date().toISOString();
   
-  await supabaseQuery(`tasks?id=eq.${taskId}`, {
+  await supabaseQuery(`tasks?id=eq.${safeId}`, {
     method: 'PATCH',
     headers: { 'Prefer': 'return=minimal' },
     body: JSON.stringify(payload)
@@ -203,7 +271,7 @@ async function updateTask(taskId, updates, author = 'unknown') {
     }
     addAuditLog({
       type: 'move',
-      taskId,
+      taskId: safeId,
       taskTitle: current.title,
       from: current.column_name,
       to: updates.column,
@@ -213,25 +281,31 @@ async function updateTask(taskId, updates, author = 'unknown') {
 }
 
 async function deleteTask(taskId) {
-  const [task] = await supabaseQuery(`tasks?id=eq.${taskId}&select=title`);
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
   
-  await supabaseQuery(`tasks?id=eq.${taskId}`, {
+  const [task] = await supabaseQuery(`tasks?id=eq.${safeId}&select=title`);
+  
+  await supabaseQuery(`tasks?id=eq.${safeId}`, {
     method: 'DELETE'
   });
   
   if (task) {
-    addAuditLog({ type: 'delete', taskId, taskTitle: task.title, author: 'michael' });
+    addAuditLog({ type: 'delete', taskId: safeId, taskTitle: task.title, author: 'michael' });
   }
 }
 
 async function addComment(taskId, comment) {
-  const [task] = await supabaseQuery(`tasks?id=eq.${taskId}&select=title`);
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
+  
+  const [task] = await supabaseQuery(`tasks?id=eq.${safeId}&select=title`);
   
   await supabaseQuery('comments', {
     method: 'POST',
     headers: { 'Prefer': 'return=minimal' },
     body: JSON.stringify({
-      task_id: taskId,
+      task_id: safeId,
       author: comment.author,
       text: comment.text
     })
@@ -240,7 +314,7 @@ async function addComment(taskId, comment) {
   if (task) {
     addAuditLog({
       type: 'comment',
-      taskId,
+      taskId: safeId,
       taskTitle: task.title,
       author: comment.author
     });
@@ -369,6 +443,18 @@ async function bulkSaveTasks(frontendTasks) {
 async function handleApiRequest(req, res, body) {
   try {
     if (req.method === 'GET') {
+      // Health check endpoint
+      if (req.url === '/api/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'ok', 
+          service: SERVICE_NAME,
+          supabase: !!SUPABASE_KEY,
+          timestamp: new Date().toISOString()
+        }));
+        return;
+      }
+      
       if (req.url === '/api/tasks') {
         const data = await getTasks();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -393,22 +479,56 @@ async function handleApiRequest(req, res, body) {
         return;
       }
       
-      // Handle individual actions
+      // Handle individual actions with validation
       const { action, taskId, task, updates, comment, author } = body;
       
       switch (action) {
-        case 'add':
-          if (task) await addTask(task);
+        case 'add': {
+          const validation = validateTask(task);
+          if (!validation.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: validation.errors }));
+            return;
+          }
+          await addTask(task);
           break;
-        case 'update':
-          if (taskId && updates) await updateTask(taskId, updates, author);
+        }
+        case 'update': {
+          const safeId = sanitizeId(taskId);
+          if (!safeId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+            return;
+          }
+          if (updates) await updateTask(safeId, updates, author);
           break;
-        case 'delete':
-          if (taskId) await deleteTask(taskId);
+        }
+        case 'delete': {
+          const safeId = sanitizeId(taskId);
+          if (!safeId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+            return;
+          }
+          await deleteTask(safeId);
           break;
-        case 'comment':
-          if (taskId && comment) await addComment(taskId, comment);
+        }
+        case 'comment': {
+          const safeId = sanitizeId(taskId);
+          if (!safeId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+            return;
+          }
+          const validation = validateComment(comment);
+          if (!validation.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: validation.errors }));
+            return;
+          }
+          await addComment(safeId, comment);
           break;
+        }
       }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });

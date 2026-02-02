@@ -233,6 +233,30 @@ async function runTests() {
     assert(task.comments.some(c => c.text === 'Automated test comment'), 'comments should be included');
   });
 
+  // --- Validation tests ---
+  await test('Validation: rejects empty title', async () => {
+    const result = await apiPost('/api/tasks', {
+      action: 'add',
+      task: { title: '', column: 'inbox' }
+    });
+    assert(result.ok === false, 'should reject empty title');
+    assert(result.errors && result.errors.length > 0, 'should have errors');
+  });
+
+  await test('Validation: rejects invalid column', async () => {
+    const result = await apiPost('/api/tasks', {
+      action: 'add',
+      task: { title: 'Test', column: 'invalid_column' }
+    });
+    assert(result.ok === false, 'should reject invalid column');
+  });
+
+  await test('Health check endpoint works', async () => {
+    const result = await apiGet('/api/health');
+    assert(result.status === 'ok', 'should return ok status');
+    assert(result.supabase === true, 'should have supabase configured');
+  });
+
   // --- Cleanup ---
   await test('Cleanup: delete test tasks', async () => {
     await supabaseDelete('comments', `?task_id=eq.${testTaskId}`);
