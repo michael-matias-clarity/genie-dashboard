@@ -1,16 +1,13 @@
 {
   "name": "genie-dashboard",
-  "version": "2.0.0",
-  "description": "Genie Task Dashboard - Kanban for AI tasks",
-  "main": "server-supabase.js",
+  "version": "3.0.0",
+  "description": "Genie Task Dashboard - Kanban for AI tasks with real-time sync",
+  "main": "server.js",
   "scripts": {
-    "start": "node server-supabase.js",
-    "start:local": "node server-local.js",
-    "start:redis": "node server.js",
+    "start": "node server.js",
+    "start:local": "node server.js",
+    "backup": "curl -X POST http://localhost:3456/api/backup",
     "migrate": "node supabase/migrate.js",
-    "test": "node test.js",
-    "test:staging": "node test-supabase.js staging",
-    "test:production": "node test-supabase.js production",
     "deploy:staging": "./deploy.sh staging",
     "deploy:production": "./deploy.sh production"
   },
@@ -18,6 +15,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@upstash/redis": "^1.28.0"
+    "@supabase/supabase-js": "^2.39.0"
   }
 }

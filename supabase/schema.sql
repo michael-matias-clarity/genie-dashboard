@@ -1,4 +1,4 @@
--- The Lamp - Supabase Schema
+-- The Lamp - Supabase Schema v3
 -- Run this in SQL Editor: https://supabase.com/dashboard/project/yjvecmrsfivmgfnikxsc/sql/new
 
 -- Tasks table
@@ -27,19 +27,55 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Genie Status table (replaces Redis TTL keys for console feature)
+CREATE TABLE IF NOT EXISTS genie_status (
+  session_key TEXT PRIMARY KEY,
+  label TEXT,
+  active BOOLEAN DEFAULT FALSE,
+  current_task TEXT,
+  model TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column_name);
 CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(task_type);
+CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
 CREATE INDEX IF NOT EXISTS idx_comments_created ON comments(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_genie_status_updated ON genie_status(updated_at DESC);
 
 -- Enable RLS
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE genie_status ENABLE ROW LEVEL SECURITY;
 
--- Policies (allow all for now - can tighten later)
-CREATE POLICY "tasks_all" ON tasks FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "comments_all" ON comments FOR ALL USING (true) WITH CHECK (true);
+-- Drop old permissive policies (run these manually if they exist)
+-- DROP POLICY IF EXISTS "tasks_all" ON tasks;
+-- DROP POLICY IF EXISTS "comments_all" ON comments;
+
+-- Anon key: read-only access for frontend
+CREATE POLICY "tasks_select_anon" ON tasks FOR SELECT USING (true);
+CREATE POLICY "comments_select_anon" ON comments FOR SELECT USING (true);
+CREATE POLICY "genie_status_select_anon" ON genie_status FOR SELECT USING (true);
+
+-- Service key: full access for server-side operations
+CREATE POLICY "tasks_all_service" ON tasks FOR ALL 
+  USING (auth.role() = 'service_role') 
+  WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "comments_all_service" ON comments FOR ALL 
+  USING (auth.role() = 'service_role') 
+  WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "genie_status_all_service" ON genie_status FOR ALL 
+  USING (auth.role() = 'service_role') 
+  WITH CHECK (auth.role() = 'service_role');
+
+-- Enable Realtime for live updates
+ALTER PUBLICATION supabase_realtime ADD TABLE tasks;
+ALTER PUBLICATION supabase_realtime ADD TABLE comments;
+ALTER PUBLICATION supabase_realtime ADD TABLE genie_status;
 
 -- Add service column to audit table if not exists
 ALTER TABLE lamp_audit ADD COLUMN IF NOT EXISTS service TEXT;

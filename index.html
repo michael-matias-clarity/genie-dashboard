@@ -3102,6 +3102,38 @@
     });
 
     loadTasks();
+    
+    // Real-time updates via Server-Sent Events
+    let eventSource = null;
+    function connectSSE() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource('/api/events');
+      
+      eventSource.onopen = () => console.log('[SSE] Connected');
+      
+      eventSource.addEventListener('tasks', (e) => {
+        console.log('[SSE] Task update received');
+        loadTasks(); // Refresh on any task change
+      });
+      
+      eventSource.addEventListener('comments', (e) => {
+        console.log('[SSE] Comment update received');
+        loadTasks(); // Refresh on any comment change
+      });
+      
+      eventSource.addEventListener('genie', (e) => {
+        console.log('[SSE] Genie status update');
+        if (currentView === 'console') pollConsole();
+      });
+      
+      eventSource.onerror = () => {
+        console.log('[SSE] Connection lost, reconnecting in 5s...');
+        setTimeout(connectSSE, 5000);
+      };
+    }
+    connectSSE();
+    
+    // Fallback polling every 30s (reduced from constant)
     setInterval(loadTasks, 30000);
   </script>
 </body>

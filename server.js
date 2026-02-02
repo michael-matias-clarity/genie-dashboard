@@ -2,26 +2,30 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { Redis } = require('@upstash/redis');
+const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 3456;
-const TASKS_KEY = 'lamp:tasks';
 
-// Initialize Redis client
-let redis = null;
-const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Supabase configuration
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://yjvecmrsfivmgfnikxsc.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SERVICE_NAME = process.env.SERVICE_NAME || 'local';
+const GIST_ID = process.env.GIST_ID || 'efa1580eefda602e38d5517799c7e84e';
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
-if (redisUrl && redisToken) {
-  try {
-    redis = new Redis({ url: redisUrl, token: redisToken });
-    console.log('Redis URL:', redisUrl.substring(0, 30) + '...');
-  } catch (e) {
-    console.error('Redis init error:', e.message);
-  }
-} else {
-  console.log('Redis env vars missing:', { url: !!redisUrl, token: !!redisToken });
+// Fail fast if Supabase not configured
+if (!SUPABASE_ANON_KEY) {
+  console.error('❌ FATAL: SUPABASE_ANON_KEY environment variable is required');
+  console.error('   Set it in your environment or .env file');
+  process.exit(1);
 }
+
+// Initialize Supabase clients
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseAdmin = SUPABASE_SERVICE_KEY 
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : supabase;
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -32,294 +36,654 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml'
 };
 
-const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [], history: [] };
-const HISTORY_KEY = 'lamp:history';
+const COLUMNS = ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'];
 
-// Supabase configuration for persistent audit logging
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://yjvecmrsfivmgfnikxsc.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
-const SERVICE_NAME = process.env.SERVICE_NAME || 'unknown'; // Set to 'production' or 'staging' in Render
-
-// Log to Supabase audit table (fire-and-forget, non-blocking)
-async function logToSupabase(entry) {
-  if (!SUPABASE_KEY) {
-    console.log('Supabase not configured, skipping audit log');
-    return;
-  }
+// ============ IN-MEMORY CACHE ============
+const cache = {
+  tasks: null,
+  tasksExpiry: 0,
+  TTL: 10000, // 10 seconds cache
   
+  invalidate() {
+    this.tasks = null;
+    this.tasksExpiry = 0;
+    console.log('[cache] Invalidated');
+  },
+  
+  isValid() {
+    return this.tasks && Date.now() < this.tasksExpiry;
+  },
+  
+  set(data) {
+    this.tasks = data;
+    this.tasksExpiry = Date.now() + this.TTL;
+  }
+};
+
+// ============ VALIDATION HELPERS ============
+
+function sanitizeId(id) {
+  if (!id || typeof id !== 'string') return null;
+  const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  return sanitized.length > 0 && sanitized.length <= 50 ? sanitized : null;
+}
+
+function validateTask(task) {
+  const errors = [];
+  if (!task) return { valid: false, errors: ['Task is required'] };
+  if (!task.title || typeof task.title !== 'string' || task.title.trim().length === 0) {
+    errors.push('Title is required and must be non-empty');
+  }
+  if (task.title && task.title.length > 500) {
+    errors.push('Title must be 500 characters or less');
+  }
+  if (task.column && !COLUMNS.includes(task.column)) {
+    errors.push(\`Invalid column: \${task.column}\`);
+  }
+  if (task.priority && !['low', 'medium', 'high'].includes(task.priority)) {
+    errors.push(\`Invalid priority: \${task.priority}\`);
+  }
+  if (task.type && !['single', 'recurring'].includes(task.type)) {
+    errors.push(\`Invalid type: \${task.type}\`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateComment(comment) {
+  const errors = [];
+  if (!comment) return { valid: false, errors: ['Comment is required'] };
+  if (!comment.text || typeof comment.text !== 'string' || comment.text.trim().length === 0) {
+    errors.push('Comment text is required');
+  }
+  if (!comment.author || typeof comment.author !== 'string') {
+    errors.push('Comment author is required');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+// ============ DATA ACCESS ============
+
+async function getTasks() {
+  if (cache.isValid()) {
+    console.log('[cache] HIT - returning cached tasks');
+    return cache.tasks;
+  }
+
   try {
-    const payload = {
+    const [tasksResult, commentsResult] = await Promise.all([
+      supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+      supabase.from('comments').select('*').order('created_at', { ascending: true })
+    ]);
+
+    if (tasksResult.error) throw tasksResult.error;
+    if (commentsResult.error) throw commentsResult.error;
+
+    const commentsByTask = {};
+    for (const c of commentsResult.data || []) {
+      if (!commentsByTask[c.task_id]) commentsByTask[c.task_id] = [];
+      commentsByTask[c.task_id].push({
+        author: c.author,
+        text: c.text,
+        time: c.created_at
+      });
+    }
+
+    const formattedTasks = (tasksResult.data || []).map(t => ({
+      id: t.id,
+      title: t.title,
+      description: t.description || '',
+      successCriteria: t.success_criteria || '',
+      userJourney: t.user_journey || '',
+      column: t.column_name,
+      priority: t.priority || 'medium',
+      type: t.task_type || 'single',
+      created: t.created_at ? t.created_at.split('T')[0] : '',
+      seenAt: t.seen_at,
+      needsLaptop: t.needs_laptop || false,
+      comments: commentsByTask[t.id] || []
+    }));
+
+    const result = { columns: COLUMNS, tasks: formattedTasks };
+    cache.set(result);
+    
+    console.log(\`✓ Fetched \${formattedTasks.length} tasks from Supabase\`);
+    return result;
+  } catch (e) {
+    console.error('getTasks error:', e.message);
+    return { columns: COLUMNS, tasks: [] };
+  }
+}
+
+async function getHistory() {
+  try {
+    const { data, error } = await supabase
+      .from('lamp_audit')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    
+    if (error) throw error;
+    
+    return (data || []).map(h => ({
+      type: h.event_type,
+      taskId: h.task_id,
+      taskTitle: h.task_title,
+      from: h.from_column,
+      to: h.to_column,
+      author: h.author,
+      time: h.created_at,
+      service: h.service
+    }));
+  } catch (e) {
+    console.error('getHistory error:', e.message);
+    return [];
+  }
+}
+
+async function addAuditLog(entry) {
+  try {
+    await supabaseAdmin.from('lamp_audit').insert({
       event_type: entry.type,
       task_id: entry.taskId,
       task_title: entry.taskTitle,
       from_column: entry.from || null,
       to_column: entry.to || null,
       author: entry.author || 'unknown',
-      metadata: entry.metadata || null,
       service: SERVICE_NAME
-    };
-    
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/lamp_audit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify(payload)
     });
+    console.log(\`✓ Audit: \${entry.type} \${entry.taskId}\`);
+  } catch (e) {
+    console.error('Audit log error:', e.message);
+  }
+}
+
+// ============ GENIE STATUS (replaces Redis) ============
+
+async function getGenieStatus() {
+  try {
+    const { data, error } = await supabase
+      .from('genie_status')
+      .select('*')
+      .order('updated_at', { ascending: false });
     
-    if (response.ok) {
-      console.log(`✓ Audit logged to Supabase: ${entry.type} ${entry.taskId}`);
-    } else {
-      console.log(`⚠ Supabase audit log failed: ${response.status}`);
-    }
+    if (error) throw error;
+    
+    const now = Date.now();
+    const sessions = (data || [])
+      .filter(s => now - new Date(s.updated_at).getTime() < 5 * 60 * 1000)
+      .map(s => ({
+        sessionKey: s.session_key,
+        label: s.label,
+        active: s.active,
+        currentTask: s.current_task,
+        model: s.model,
+        updatedAt: s.updated_at
+      }));
+    
+    const activeSession = sessions.find(s => s.active);
+    
+    return {
+      active: sessions.some(s => s.active),
+      currentTask: activeSession?.currentTask || null,
+      updatedAt: sessions[0]?.updatedAt || null,
+      sessions
+    };
   } catch (e) {
-    console.log(`⚠ Supabase audit error: ${e.message}`);
+    console.error('getGenieStatus error:', e.message);
+    return { active: false, sessions: [], error: e.message };
   }
 }
 
-// Get tasks - ALWAYS fetch from Redis (no memory cache)
-async function getTasks() {
-  // Always try Redis first
-  if (redis) {
-    try {
-      let data = await redis.get(TASKS_KEY);
-      
-      // Handle string data (from REST API storage)
-      if (typeof data === 'string') {
-        data = JSON.parse(data);
-      }
-      if (data && data.tasks && data.tasks.length > 0) {
-        console.log(`✓ Fetched ${data.tasks.length} tasks from Redis`);
-        return data;
-      } else {
-        console.log('Redis data empty or invalid');
-      }
-    } catch (e) {
-      console.error('Redis GET error:', e.message);
-    }
-  }
-  
-  // Fallback to local file ONLY if Redis failed or not configured
+async function updateGenieStatus(sessionKey, status) {
   try {
-    const fileData = JSON.parse(fs.readFileSync(path.join(__dirname, 'tasks.json'), 'utf8'));
-    if (fileData.tasks && fileData.tasks.length > 0) {
-      console.log(`⚠️ Fallback: Loaded ${fileData.tasks.length} tasks from local file`);
-      return fileData;
-    }
+    const { error } = await supabaseAdmin.from('genie_status').upsert({
+      session_key: sessionKey,
+      label: status.label || sessionKey,
+      active: status.active || false,
+      current_task: status.currentTask || null,
+      model: status.model || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'session_key' });
+    
+    if (error) throw error;
+    console.log(\`✓ Genie status updated: \${sessionKey}\`);
+    return { ok: true };
   } catch (e) {
-    console.log('No local backup file');
+    console.error('updateGenieStatus error:', e.message);
+    return { ok: false, error: e.message };
   }
-  
-  return DEFAULT_DATA;
 }
 
-// Save tasks - Redis primary, local backup
-async function saveTasks(data) {
-  if (!data || !data.tasks) return;
+// ============ TASK OPERATIONS ============
+
+async function addTask(task) {
+  const id = task.id || Date.now().toString();
   
-  // Save to Redis (primary)
-  if (redis) {
-    try {
-      await redis.set(TASKS_KEY, data);
-      console.log(`✓ Saved ${data.tasks.length} tasks to Redis`);
-    } catch (e) {
-      console.error('Redis SET error:', e.message);
+  const { error } = await supabaseAdmin.from('tasks').insert({
+    id,
+    title: task.title,
+    description: task.description || null,
+    success_criteria: task.successCriteria || null,
+    user_journey: task.userJourney || null,
+    column_name: task.column || 'inbox',
+    priority: task.priority || 'medium',
+    task_type: task.type || 'single',
+    needs_laptop: task.needsLaptop || false
+  });
+  
+  if (error) throw error;
+  
+  cache.invalidate();
+  addAuditLog({ type: 'add', taskId: id, taskTitle: task.title, author: 'michael' });
+  return id;
+}
+
+async function updateTask(taskId, updates, author = 'unknown') {
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
+  
+  const { data: current } = await supabase
+    .from('tasks')
+    .select('column_name, title')
+    .eq('id', safeId)
+    .single();
+  
+  const payload = { updated_at: new Date().toISOString() };
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.description !== undefined) payload.description = updates.description;
+  if (updates.successCriteria !== undefined) payload.success_criteria = updates.successCriteria;
+  if (updates.userJourney !== undefined) payload.user_journey = updates.userJourney;
+  if (updates.priority !== undefined) payload.priority = updates.priority;
+  if (updates.type !== undefined) payload.task_type = updates.type;
+  if (updates.needsLaptop !== undefined) payload.needs_laptop = updates.needsLaptop;
+  if (updates.seenAt !== undefined) payload.seen_at = updates.seenAt;
+  if (updates.column !== undefined) payload.column_name = updates.column;
+  
+  const { error } = await supabaseAdmin.from('tasks').update(payload).eq('id', safeId);
+  if (error) throw error;
+  
+  cache.invalidate();
+  
+  if (updates.column && current && updates.column !== current.column_name) {
+    let moveAuthor = author;
+    if (moveAuthor === 'unknown') {
+      if (updates.column === 'done') moveAuthor = 'michael';
+      else if (['review', 'in_progress'].includes(updates.column)) moveAuthor = 'genie';
     }
+    addAuditLog({
+      type: 'move',
+      taskId: safeId,
+      taskTitle: current.title,
+      from: current.column_name,
+      to: updates.column,
+      author: moveAuthor
+    });
   }
+}
+
+async function deleteTask(taskId) {
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
   
-  // Also save locally as backup
+  const { data: task } = await supabase.from('tasks').select('title').eq('id', safeId).single();
+  
+  const { error } = await supabaseAdmin.from('tasks').delete().eq('id', safeId);
+  if (error) throw error;
+  
+  cache.invalidate();
+  
+  if (task) {
+    addAuditLog({ type: 'delete', taskId: safeId, taskTitle: task.title, author: 'michael' });
+  }
+}
+
+async function addComment(taskId, comment) {
+  const safeId = sanitizeId(taskId);
+  if (!safeId) throw new Error('Invalid taskId');
+  
+  const { data: task } = await supabase.from('tasks').select('title').eq('id', safeId).single();
+  
+  const { error } = await supabaseAdmin.from('comments').insert({
+    task_id: safeId,
+    author: comment.author,
+    text: comment.text
+  });
+  
+  if (error) throw error;
+  
+  cache.invalidate();
+  
+  if (task) {
+    addAuditLog({ type: 'comment', taskId: safeId, taskTitle: task.title, author: comment.author });
+  }
+}
+
+// ============ BULK SAVE WITH UPSERT ============
+
+async function bulkSaveTasks(frontendTasks) {
   try {
-    fs.writeFileSync(path.join(__dirname, 'tasks.json'), JSON.stringify(data, null, 2));
-  } catch (e) {}
-}
-
-// Get history - ALWAYS fetch from Redis
-async function getHistory() {
-  if (redis) {
-    try {
-      let data = await redis.get(HISTORY_KEY);
-      if (typeof data === 'string') data = JSON.parse(data);
-      if (Array.isArray(data)) {
-        return data;
-      }
-    } catch (e) {
-      console.error('History GET error:', e.message);
+    const [tasksResult, commentsResult] = await Promise.all([
+      supabase.from('tasks').select('id,title,description,success_criteria,user_journey,column_name,priority,task_type,seen_at,needs_laptop'),
+      supabase.from('comments').select('id,task_id,author,text')
+    ]);
+    
+    const dbTaskMap = new Map((tasksResult.data || []).map(t => [t.id, t]));
+    const dbCommentMap = new Map();
+    for (const c of commentsResult.data || []) {
+      if (!dbCommentMap.has(c.task_id)) dbCommentMap.set(c.task_id, []);
+      dbCommentMap.get(c.task_id).push({ author: c.author, text: c.text });
     }
-  }
-  return [];
-}
 
-// Save history entry
-async function addHistoryEntry(entry) {
-  // Log to Redis (in-memory history for quick access)
-  if (redis) {
-    try {
-      let history = await getHistory();
-      history.unshift(entry); // Add to front
-      history = history.slice(0, 1000); // Keep last 1000
-      await redis.set(HISTORY_KEY, history);
-    } catch (e) {
-      console.error('History SET error:', e.message);
-    }
-  }
-  
-  // Log to Supabase (persistent audit trail - fire and forget)
-  logToSupabase(entry).catch(() => {}); // Non-blocking
-}
+    const tasksToUpsert = [];
+    const commentsToInsert = [];
+    const auditEntries = [];
 
-// Handle task operations
-function handleTaskOperation(data, body) {
-  const { action, taskId, task, updates, comment, author: requestAuthor } = body;
-  
-  switch (action) {
-    case 'add':
-      if (task) {
-        task.id = task.id || Date.now().toString();
-        task.created = task.created || new Date().toISOString().split('T')[0];
-        task.comments = task.comments || [];
-        data.tasks.push(task);
-        // Log to history
-        addHistoryEntry({
-          type: 'add',
-          taskId: task.id,
-          taskTitle: task.title,
-          author: 'michael',
-          time: new Date().toISOString()
-        });
-      }
-      break;
+    for (const task of frontendTasks) {
+      const dbTask = dbTaskMap.get(task.id);
       
-    case 'update':
-      const toUpdate = data.tasks.find(t => t.id === taskId);
-      if (toUpdate && updates) {
-        const oldColumn = toUpdate.column;
-        Object.assign(toUpdate, updates);
-        // Log column moves to history
-        if (updates.column && updates.column !== oldColumn) {
-          // Determine author: use explicit author, or infer from move direction
-          let moveAuthor = requestAuthor || 'unknown';
-          if (moveAuthor === 'unknown') {
-            // Infer: only Michael can move to 'done', Genie typically moves to 'review' or 'in_progress'
-            if (updates.column === 'done') moveAuthor = 'michael';
-            else if (updates.column === 'review' && oldColumn === 'in_progress') moveAuthor = 'genie';
-            else if (updates.column === 'in_progress' && oldColumn === 'inbox') moveAuthor = 'genie';
-          }
-          addHistoryEntry({
-            type: 'move',
-            taskId,
-            taskTitle: toUpdate.title,
-            from: oldColumn,
-            to: updates.column,
-            author: moveAuthor,
-            time: new Date().toISOString()
-          });
+      const taskRow = {
+        id: task.id,
+        title: task.title,
+        description: task.description || null,
+        success_criteria: task.successCriteria || null,
+        user_journey: task.userJourney || null,
+        column_name: task.column,
+        priority: task.priority || 'medium',
+        task_type: task.type || 'single',
+        seen_at: task.seenAt || null,
+        needs_laptop: task.needsLaptop || false,
+        updated_at: new Date().toISOString()
+      };
+      
+      if (!dbTask) {
+        taskRow.created_at = new Date().toISOString();
+        auditEntries.push({ type: 'add', taskId: task.id, taskTitle: task.title, author: 'michael' });
+      }
+      
+      tasksToUpsert.push(taskRow);
+      
+      const dbComments = dbCommentMap.get(task.id) || [];
+      const dbCommentSet = new Set(dbComments.map(c => \`\${c.author}:\${c.text}\`));
+      
+      for (const c of task.comments || []) {
+        const key = \`\${c.author}:\${c.text}\`;
+        if (!dbCommentSet.has(key)) {
+          commentsToInsert.push({ task_id: task.id, author: c.author, text: c.text });
+          auditEntries.push({ type: 'comment', taskId: task.id, taskTitle: task.title, author: c.author });
         }
       }
-      break;
-      
-    case 'delete':
-      const toDelete = data.tasks.find(t => t.id === taskId);
-      if (toDelete) {
-        addHistoryEntry({
-          type: 'delete',
-          taskId,
-          taskTitle: toDelete.title,
-          author: 'michael',
-          time: new Date().toISOString()
-        });
-      }
-      data.tasks = data.tasks.filter(t => t.id !== taskId);
-      break;
-      
-    case 'comment':
-      const toComment = data.tasks.find(t => t.id === taskId);
-      if (toComment && comment) {
-        toComment.comments = toComment.comments || [];
-        toComment.comments.push(comment);
-        // Log comment to history
-        addHistoryEntry({
-          type: 'comment',
-          taskId,
-          taskTitle: toComment.title,
-          author: comment.author || 'unknown',
-          commentText: comment.text?.substring(0, 100),
-          time: new Date().toISOString()
-        });
-      }
-      break;
-      
-    default:
-      // Full replace
-      if (body.tasks) {
-        data.columns = body.columns || data.columns;
-        data.tasks = body.tasks;
-      }
+    }
+
+    if (tasksToUpsert.length > 0) {
+      const { error } = await supabaseAdmin.from('tasks').upsert(tasksToUpsert, { 
+        onConflict: 'id',
+        ignoreDuplicates: false 
+      });
+      if (error) throw error;
+    }
+
+    if (commentsToInsert.length > 0) {
+      const { error } = await supabaseAdmin.from('comments').insert(commentsToInsert);
+      if (error) throw error;
+    }
+
+    for (const entry of auditEntries) {
+      addAuditLog(entry);
+    }
+
+    cache.invalidate();
+    console.log(\`[bulkSave] ✓ Upserted \${tasksToUpsert.length} tasks, \${commentsToInsert.length} comments\`);
+  } catch (e) {
+    console.error('[bulkSave] Error:', e.message);
+    throw e;
   }
-  
-  return data;
 }
 
-// Initialize
-async function init() {
-  console.log(`
-🪔 The Lamp - Task Dashboard
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Redis: ${redis ? '✓ Connected' : '✗ Not configured'}
-`);
-  
-  const data = await getTasks();
-  console.log(`Ready with ${data.tasks?.length || 0} tasks`);
+// ============ BACKUP TO GITHUB GIST ============
+
+async function backupToGist() {
+  if (!GITHUB_TOKEN || !GIST_ID) {
+    return { ok: false, error: 'GITHUB_TOKEN or GIST_ID not configured' };
+  }
+
+  try {
+    const [tasksData, historyData] = await Promise.all([
+      getTasks(),
+      getHistory()
+    ]);
+
+    const response = await fetch(\`https://api.github.com/gists/\${GIST_ID}\`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': \`Bearer \${GITHUB_TOKEN}\`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github+json'
+      },
+      body: JSON.stringify({
+        files: {
+          'tasks.json': { content: JSON.stringify(tasksData, null, 2) },
+          'history.json': { content: JSON.stringify(historyData, null, 2) },
+          'backup-meta.json': { content: JSON.stringify({
+            timestamp: new Date().toISOString(),
+            taskCount: tasksData.tasks.length,
+            historyCount: historyData.length,
+            service: SERVICE_NAME
+          }, null, 2) }
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(\`GitHub API error: \${response.status}\`);
+    }
+
+    console.log(\`✓ Backed up to Gist: \${tasksData.tasks.length} tasks, \${historyData.length} history\`);
+    return { ok: true, timestamp: new Date().toISOString(), tasks: tasksData.tasks.length };
+  } catch (e) {
+    console.error('Backup error:', e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
-const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+// ============ SCHEDULED BACKUP (every 6 hours) ============
+const BACKUP_INTERVAL = 6 * 60 * 60 * 1000;
+setInterval(async () => {
+  console.log('[scheduler] Running automated backup...');
+  await backupToGist();
+}, BACKUP_INTERVAL);
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
+// ============ REAL-TIME BROADCAST (SSE) ============
+const clients = new Set();
+
+function broadcastToClients(event, data) {
+  const message = \`event: \${event}\ndata: \${JSON.stringify(data)}\n\n\`;
+  for (const client of clients) {
+    try {
+      client.write(message);
+    } catch (e) {
+      clients.delete(client);
+    }
   }
+}
 
-  // GET /api/tasks
-  if (req.url === '/api/tasks' && req.method === 'GET') {
-    const tasks = await getTasks();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(tasks));
-    return;
-  }
+function setupRealtimeSubscription() {
+  const channel = supabase.channel('lamp-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
+      console.log('[realtime] Task change:', payload.eventType);
+      cache.invalidate();
+      broadcastToClients('tasks', { type: payload.eventType, record: payload.new || payload.old });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, (payload) => {
+      console.log('[realtime] Comment change:', payload.eventType);
+      cache.invalidate();
+      broadcastToClients('comments', { type: payload.eventType, record: payload.new || payload.old });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'genie_status' }, (payload) => {
+      console.log('[realtime] Genie status change');
+      broadcastToClients('genie', payload.new);
+    })
+    .subscribe((status) => {
+      console.log(\`[realtime] Subscription status: \${status}\`);
+    });
+    
+  return channel;
+}
 
-  // POST /api/tasks
-  if (req.url === '/api/tasks' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const payload = JSON.parse(body);
-        let data = await getTasks();
-        data = handleTaskOperation({ ...data }, payload);
-        await saveTasks(data);
+setupRealtimeSubscription();
+
+// ============ REQUEST HANDLER ============
+
+async function handleApiRequest(req, res, body) {
+  try {
+    if (req.method === 'GET' && req.url === '/api/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.write('event: connected\ndata: {}\n\n');
+      
+      clients.add(res);
+      req.on('close', () => {
+        clients.delete(res);
+        console.log(\`[sse] Client disconnected (\${clients.size} remaining)\`);
+      });
+      console.log(\`[sse] Client connected (\${clients.size} total)\`);
+      return;
+    }
+
+    if (req.method === 'GET') {
+      if (req.url === '/api/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ 
+          status: 'ok', 
+          version: '3.0.0',
+          service: SERVICE_NAME,
+          supabase: true,
+          realtime: true,
+          cache: cache.isValid(),
+          clients: clients.size,
+          timestamp: new Date().toISOString()
+        }));
+        return;
+      }
+      
+      if (req.url === '/api/tasks') {
+        const data = await getTasks();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+        return;
+      }
+      
+      if (req.url.startsWith('/api/history')) {
+        const history = await getHistory();
+        const url = new URL(req.url, \`http://\${req.headers.host}\`);
+        const author = url.searchParams.get('author');
+        let filtered = history;
+        if (author && author !== 'all') {
+          filtered = history.filter(h => h.author === author);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(filtered.slice(0, 100)));
+        return;
+      }
+      
+      if (req.url === '/api/console') {
+        const status = await getGenieStatus();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+        return;
+      }
+    }
+    
+    if (req.method === 'POST') {
+      if (req.url === '/api/tasks') {
+        if (body.tasks && Array.isArray(body.tasks)) {
+          await bulkSaveTasks(body.tasks);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, saved: new Date().toISOString() }));
+          return;
+        }
+        
+        const { action, taskId, task, updates, comment, author } = body;
+        
+        switch (action) {
+          case 'add': {
+            const validation = validateTask(task);
+            if (!validation.valid) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: validation.errors }));
+              return;
+            }
+            await addTask(task);
+            break;
+          }
+          case 'update': {
+            const safeId = sanitizeId(taskId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+              return;
+            }
+            if (updates) await updateTask(safeId, updates, author);
+            break;
+          }
+          case 'delete': {
+            const safeId = sanitizeId(taskId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+              return;
+            }
+            await deleteTask(safeId);
+            break;
+          }
+          case 'comment': {
+            const safeId = sanitizeId(taskId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid taskId'] }));
+              return;
+            }
+            const validation = validateComment(comment);
+            if (!validation.valid) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: validation.errors }));
+              return;
+            }
+            await addComment(safeId, comment);
+            break;
+          }
+        }
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, saved: new Date().toISOString() }));
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
+        return;
       }
-    });
-    return;
-  }
+      
+      if (req.url === '/api/console') {
+        const { sessionKey, ...status } = body;
+        if (!sessionKey) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'sessionKey required' }));
+          return;
+        }
+        const result = await updateGenieStatus(sessionKey, status);
+        res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+        return;
+      }
+      
+      if (req.url === '/api/backup') {
+        const result = await backupToGist();
+        res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+        return;
+      }
 
-  // POST /api/generate-image
-  if (req.url === '/api/generate-image' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const { taskTitle } = JSON.parse(body);
+      if (req.url === '/api/generate-image') {
+        const { taskTitle } = body;
         const apiKey = process.env.OPENAI_API_KEY;
         
         if (!apiKey) {
@@ -328,7 +692,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const prompt = `A cute, celebratory cartoon for: "${taskTitle}". Style: minimal, friendly, warm colors. No text.`;
+        const prompt = \`A cute, celebratory cartoon for: "\${taskTitle}". Style: minimal, friendly, warm colors. No text.\`;
         
         const requestData = JSON.stringify({
           model: 'dall-e-3',
@@ -344,7 +708,7 @@ const server = http.createServer(async (req, res) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+            'Authorization': \`Bearer \${apiKey}\`,
             'Content-Length': Buffer.byteLength(requestData)
           }
         }, (apiRes) => {
@@ -374,21 +738,11 @@ const server = http.createServer(async (req, res) => {
 
         apiReq.write(requestData);
         apiReq.end();
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
+        return;
       }
-    });
-    return;
-  }
 
-  // POST /api/transcribe (Whisper)
-  if (req.url === '/api/transcribe' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const { audio } = JSON.parse(body);
+      if (req.url === '/api/transcribe') {
+        const { audio } = body;
         const apiKey = process.env.OPENAI_API_KEY;
         
         if (!apiKey) {
@@ -397,15 +751,12 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Convert base64 to buffer
         const audioBuffer = Buffer.from(audio, 'base64');
-        
-        // Create multipart form data manually
         const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substr(2);
         const formData = Buffer.concat([
-          Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n`),
+          Buffer.from(\`--\${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: audio/webm\r\n\r\n\`),
           audioBuffer,
-          Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--${boundary}--\r\n`)
+          Buffer.from(\`\r\n--\${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n--\${boundary}--\r\n\`)
         ]);
 
         const apiReq = https.request({
@@ -413,8 +764,8 @@ const server = http.createServer(async (req, res) => {
           path: '/v1/audio/transcriptions',
           method: 'POST',
           headers: {
-            'Content-Type': `multipart/form-data; boundary=${boundary}`,
-            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': \`multipart/form-data; boundary=\${boundary}\`,
+            'Authorization': \`Bearer \${apiKey}\`,
             'Content-Length': formData.length
           }
         }, (apiRes) => {
@@ -439,102 +790,71 @@ const server = http.createServer(async (req, res) => {
 
         apiReq.write(formData);
         apiReq.end();
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
+        return;
       }
-    });
-    return;
-  }
-
-  // GET /api/history
-  if (req.url.startsWith('/api/history') && req.method === 'GET') {
-    const history = await getHistory();
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const author = url.searchParams.get('author');
-    let filtered = history;
-    if (author && author !== 'all') {
-      filtered = history.filter(h => h.author === author);
     }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(filtered.slice(0, 100)));
+    
+    res.writeHead(404);
+    res.end('Not found');
+  } catch (e) {
+    console.error('API error:', e.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message }));
+  }
+}
+
+// ============ SERVER ============
+
+const server = http.createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
     return;
   }
-
-  // GET /api/health
-  if (req.url === '/api/health' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'ok', 
-      tasks: 'check /api/tasks',
-      redis: !!redis
-    }));
-    return;
-  }
-
-  // GET /api/console - Real-time Genie status
-  if (req.url === '/api/console' && req.method === 'GET') {
-    if (redis) {
+  
+  if (req.url.startsWith('/api/')) {
+    let body = {};
+    if (req.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
       try {
-        let status = await redis.get('genie:status');
-        if (typeof status === 'string') status = JSON.parse(status);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(status || { active: false, sessions: [] }));
-      } catch (e) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    } else {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ active: false, sessions: [], message: 'Redis not configured' }));
+        body = JSON.parse(Buffer.concat(chunks).toString());
+      } catch (e) {}
     }
-    return;
+    return handleApiRequest(req, res, body);
   }
-
-  // POST /api/console - Update Genie status (called by Genie)
-  if (req.url === '/api/console' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      try {
-        const status = JSON.parse(body);
-        status.updatedAt = new Date().toISOString();
-        if (redis) {
-          await redis.set('genie:status', status);
-          // Set TTL of 5 minutes so stale status auto-clears
-          await redis.expire('genie:status', 300);
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    });
-    return;
-  }
-
-  // Static files
+  
   let filePath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
   filePath = path.join(__dirname, filePath);
-
+  
   const ext = path.extname(filePath);
-  const contentType = MIME_TYPES[ext] || 'text/plain';
-
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-      res.end(err.code === 'ENOENT' ? 'Not found' : 'Server error');
-      return;
-    }
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  
+  try {
+    const content = fs.readFileSync(filePath);
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(content);
-  });
+  } catch (e) {
+    res.writeHead(404);
+    res.end('Not found');
+  }
 });
 
-// Start
-init().then(() => {
-  server.listen(PORT, () => {
-    console.log(`Running at http://localhost:${PORT}`);
-  });
+server.listen(PORT, () => {
+  console.log(\`\n🪔 The Lamp v3.0 running on port \${PORT}\`);
+  console.log(\`   Service: \${SERVICE_NAME}\`);
+  console.log(\`   Supabase: \${SUPABASE_URL.substring(0, 40)}...\`);
+  console.log(\`   Realtime: enabled\`);
+  console.log(\`   Cache TTL: \${cache.TTL}ms\`);
+  console.log(\`   Auto-backup: every 6 hours\`);
+  if (!GITHUB_TOKEN) {
+    console.log(\`   ⚠️  GITHUB_TOKEN not set - backups disabled\`);
+  }
+  if (!SUPABASE_SERVICE_KEY) {
+    console.log(\`   ⚠️  SUPABASE_SERVICE_KEY not set - using anon key for writes\`);
+  }
 });
