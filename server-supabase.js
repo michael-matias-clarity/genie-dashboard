@@ -31,15 +31,11 @@ async function supabaseQuery(endpoint, options = {}) {
     ...options.headers
   };
   
-  console.log(`[supabaseQuery] ${options.method || 'GET'} ${endpoint}`);
-  
   const response = await fetch(url, { ...options, headers });
-  
-  console.log(`[supabaseQuery] Response: ${response.status} ${response.statusText}`);
   
   if (!response.ok) {
     const error = await response.text();
-    console.error(`[supabaseQuery] Error: ${error}`);
+    console.error(`[supabase] ERROR ${options.method || 'GET'} ${endpoint}: ${error}`);
     throw new Error(`Supabase error: ${response.status} - ${error}`);
   }
   
@@ -262,29 +258,25 @@ async function bulkSaveTasks(frontendTasks) {
   try {
     // Get current state from Supabase (single query each)
     const [currentTasks, currentComments] = await Promise.all([
-      supabaseQuery('tasks?select=id,column_name'),
+      supabaseQuery('tasks?select=id,title,description,success_criteria,user_journey,column_name,priority,task_type,seen_at,needs_laptop'),
       supabaseQuery('comments?select=id,task_id,author,text')
     ]);
     
-    const currentIds = new Set((currentTasks || []).map(t => t.id));
-    const frontendIds = new Set(frontendTasks.map(t => t.id));
-    
-    // Build comment lookup: task_id -> array of {author, text}
-    const existingComments = {};
+    // Build lookup maps
+    const dbTaskMap = new Map((currentTasks || []).map(t => [t.id, t]));
+    const dbCommentMap = new Map();
     for (const c of currentComments || []) {
-      if (!existingComments[c.task_id]) existingComments[c.task_id] = [];
-      existingComments[c.task_id].push({ id: c.id, author: c.author, text: c.text });
+      if (!dbCommentMap.has(c.task_id)) dbCommentMap.set(c.task_id, []);
+      dbCommentMap.get(c.task_id).push({ author: c.author, text: c.text });
     }
 
-    // Find tasks to add vs update
-    const toAdd = frontendTasks.filter(t => !currentIds.has(t.id));
-    const toUpdate = frontendTasks.filter(t => currentIds.has(t.id));
+    let added = 0, updated = 0, commentsAdded = 0;
 
-    console.log(`[bulkSave] Add: ${toAdd.length}, Update: ${toUpdate.length}`);
-
-    // Process additions
-    for (const task of toAdd) {
-      try {
+    for (const task of frontendTasks) {
+      const dbTask = dbTaskMap.get(task.id);
+      
+      if (!dbTask) {
+        // NEW TASK - insert it
         await supabaseQuery('tasks', {
           method: 'POST',
           headers: { 'Prefer': 'return=minimal' },
@@ -301,69 +293,71 @@ async function bulkSaveTasks(frontendTasks) {
             needs_laptop: task.needsLaptop || false
           })
         });
+        added++;
         
-        // Add all comments for new task
+        // Add comments for new task
         for (const c of task.comments || []) {
           await supabaseQuery('comments', {
             method: 'POST',
             headers: { 'Prefer': 'return=minimal' },
             body: JSON.stringify({ task_id: task.id, author: c.author, text: c.text })
           });
+          commentsAdded++;
         }
         
         addAuditLog({ type: 'add', taskId: task.id, taskTitle: task.title, author: 'michael' });
-      } catch (e) {
-        console.error(`[bulkSave] Failed to add ${task.id}:`, e.message);
-        throw e;
-      }
-    }
-
-    // Process updates (including comments)
-    for (const task of toUpdate) {
-      try {
-        // Update task fields
-        await supabaseQuery(`tasks?id=eq.${task.id}`, {
-          method: 'PATCH',
-          headers: { 'Prefer': 'return=minimal' },
-          body: JSON.stringify({
-            title: task.title,
-            description: task.description || null,
-            success_criteria: task.successCriteria || null,
-            user_journey: task.userJourney || null,
-            column_name: task.column,
-            priority: task.priority || 'medium',
-            task_type: task.type || 'single',
-            seen_at: task.seenAt || null,
-            needs_laptop: task.needsLaptop || false,
-            updated_at: new Date().toISOString()
-          })
-        });
+      } else {
+        // EXISTING TASK - check if anything changed
+        const changed = 
+          dbTask.title !== task.title ||
+          (dbTask.description || '') !== (task.description || '') ||
+          (dbTask.success_criteria || '') !== (task.successCriteria || '') ||
+          (dbTask.user_journey || '') !== (task.userJourney || '') ||
+          dbTask.column_name !== task.column ||
+          dbTask.priority !== (task.priority || 'medium') ||
+          dbTask.task_type !== (task.type || 'single') ||
+          dbTask.needs_laptop !== (task.needsLaptop || false);
         
-        // Sync comments: find new comments (not in DB)
-        const dbComments = existingComments[task.id] || [];
-        const frontendComments = task.comments || [];
-        
-        // Simple approach: add comments that don't exist in DB
-        // Match by author + text (comments are immutable)
-        const dbSet = new Set(dbComments.map(c => `${c.author}:${c.text}`));
-        const newComments = frontendComments.filter(c => !dbSet.has(`${c.author}:${c.text}`));
-        
-        for (const c of newComments) {
-          await supabaseQuery('comments', {
-            method: 'POST',
+        if (changed) {
+          await supabaseQuery(`tasks?id=eq.${task.id}`, {
+            method: 'PATCH',
             headers: { 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ task_id: task.id, author: c.author, text: c.text })
+            body: JSON.stringify({
+              title: task.title,
+              description: task.description || null,
+              success_criteria: task.successCriteria || null,
+              user_journey: task.userJourney || null,
+              column_name: task.column,
+              priority: task.priority || 'medium',
+              task_type: task.type || 'single',
+              seen_at: task.seenAt || null,
+              needs_laptop: task.needsLaptop || false,
+              updated_at: new Date().toISOString()
+            })
           });
-          console.log(`[bulkSave] Added comment on ${task.id} by ${c.author}`);
-          addAuditLog({ type: 'comment', taskId: task.id, taskTitle: task.title, author: c.author });
+          updated++;
         }
-      } catch (e) {
-        console.error(`[bulkSave] Failed to update ${task.id}:`, e.message);
-        throw e;
+        
+        // Check for new comments
+        const dbComments = dbCommentMap.get(task.id) || [];
+        const dbCommentSet = new Set(dbComments.map(c => `${c.author}:${c.text}`));
+        
+        for (const c of task.comments || []) {
+          const key = `${c.author}:${c.text}`;
+          if (!dbCommentSet.has(key)) {
+            await supabaseQuery('comments', {
+              method: 'POST',
+              headers: { 'Prefer': 'return=minimal' },
+              body: JSON.stringify({ task_id: task.id, author: c.author, text: c.text })
+            });
+            commentsAdded++;
+            addAuditLog({ type: 'comment', taskId: task.id, taskTitle: task.title, author: c.author });
+          }
+        }
       }
     }
 
-    console.log('[bulkSave] ✓ Complete');
+    console.log(`[bulkSave] ✓ Added: ${added}, Updated: ${updated}, Comments: ${commentsAdded}`);
   } catch (e) {
     console.error('[bulkSave] Error:', e.message);
     throw e;
