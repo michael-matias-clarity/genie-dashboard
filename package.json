@@ -5,6 +5,7 @@
   "main": "server-supabase.js",
   "scripts": {
     "start": "node server-supabase.js",
+    "start:local": "node server-local.js",
     "start:redis": "node server.js",
     "migrate": "node supabase/migrate.js",
     "test": "node test.js",
