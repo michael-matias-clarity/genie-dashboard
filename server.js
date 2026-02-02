@@ -35,6 +35,50 @@ const MIME_TYPES = {
 const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'review', 'done'], tasks: [], history: [] };
 const HISTORY_KEY = 'lamp:history';
 
+// Supabase configuration for persistent audit logging
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://dokdvzlvtqqehadqvshn.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
+
+// Log to Supabase audit table (fire-and-forget, non-blocking)
+async function logToSupabase(entry) {
+  if (!SUPABASE_KEY) {
+    console.log('Supabase not configured, skipping audit log');
+    return;
+  }
+  
+  try {
+    const payload = {
+      event_type: entry.type,
+      task_id: entry.taskId,
+      task_title: entry.taskTitle,
+      from_column: entry.from || null,
+      to_column: entry.to || null,
+      author: entry.author || 'unknown',
+      metadata: entry.metadata || null,
+      session_id: entry.sessionId || null
+    };
+    
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/lamp_audit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    if (response.ok) {
+      console.log(`✓ Audit logged to Supabase: ${entry.type} ${entry.taskId}`);
+    } else {
+      console.log(`⚠ Supabase audit log failed: ${response.status}`);
+    }
+  } catch (e) {
+    console.log(`⚠ Supabase audit error: ${e.message}`);
+  }
+}
+
 // Get tasks - ALWAYS fetch from Redis (no memory cache)
 async function getTasks() {
   // Always try Redis first
@@ -109,9 +153,9 @@ async function getHistory() {
 
 // Save history entry
 async function addHistoryEntry(entry) {
+  // Log to Redis (in-memory history for quick access)
   if (redis) {
     try {
-      // Fetch current, add new entry, save back
       let history = await getHistory();
       history.unshift(entry); // Add to front
       history = history.slice(0, 1000); // Keep last 1000
@@ -120,6 +164,9 @@ async function addHistoryEntry(entry) {
       console.error('History SET error:', e.message);
     }
   }
+  
+  // Log to Supabase (persistent audit trail - fire and forget)
+  logToSupabase(entry).catch(() => {}); // Non-blocking
 }
 
 // Handle task operations
