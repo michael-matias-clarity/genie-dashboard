@@ -251,6 +251,111 @@ async function addComment(taskId, comment) {
   }
 }
 
+// ============ BULK SAVE (for frontend compatibility) ============
+
+async function bulkSaveTasks(frontendTasks) {
+  if (!SUPABASE_KEY) {
+    console.log('[bulkSave] Supabase not configured');
+    return;
+  }
+
+  try {
+    // Get current tasks from Supabase
+    const currentTasks = await supabaseQuery('tasks?select=id');
+    const currentIds = new Set((currentTasks || []).map(t => t.id));
+    const frontendIds = new Set(frontendTasks.map(t => t.id));
+
+    // Find tasks to add, update, delete
+    const toAdd = frontendTasks.filter(t => !currentIds.has(t.id));
+    const toUpdate = frontendTasks.filter(t => currentIds.has(t.id));
+    const toDelete = [...currentIds].filter(id => !frontendIds.has(id));
+
+    console.log(`[bulkSave] Add: ${toAdd.length}, Update: ${toUpdate.length}, Delete: ${toDelete.length}`);
+
+    // Process additions
+    for (const task of toAdd) {
+      try {
+        await supabaseQuery('tasks', {
+          method: 'POST',
+          headers: { 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            id: task.id,
+            title: task.title,
+            description: task.description || null,
+            success_criteria: task.successCriteria || null,
+            user_journey: task.userJourney || null,
+            column_name: task.column,
+            priority: task.priority || 'medium',
+            task_type: task.type || 'single',
+            seen_at: task.seenAt || null,
+            needs_laptop: task.needsLaptop || false
+          })
+        });
+        console.log(`[bulkSave] Added: ${task.id}`);
+        
+        // Add comments if any
+        if (task.comments && task.comments.length > 0) {
+          for (const c of task.comments) {
+            await supabaseQuery('comments', {
+              method: 'POST',
+              headers: { 'Prefer': 'return=minimal' },
+              body: JSON.stringify({
+                task_id: task.id,
+                author: c.author,
+                text: c.text
+              })
+            });
+          }
+        }
+        
+        addAuditLog({ type: 'add', taskId: task.id, taskTitle: task.title, author: 'michael' });
+      } catch (e) {
+        console.error(`[bulkSave] Failed to add ${task.id}:`, e.message);
+      }
+    }
+
+    // Process updates
+    for (const task of toUpdate) {
+      try {
+        await supabaseQuery(`tasks?id=eq.${task.id}`, {
+          method: 'PATCH',
+          headers: { 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            title: task.title,
+            description: task.description || null,
+            success_criteria: task.successCriteria || null,
+            user_journey: task.userJourney || null,
+            column_name: task.column,
+            priority: task.priority || 'medium',
+            task_type: task.type || 'single',
+            seen_at: task.seenAt || null,
+            needs_laptop: task.needsLaptop || false,
+            updated_at: new Date().toISOString()
+          })
+        });
+      } catch (e) {
+        console.error(`[bulkSave] Failed to update ${task.id}:`, e.message);
+      }
+    }
+
+    // Process deletions
+    for (const id of toDelete) {
+      try {
+        await supabaseQuery(`tasks?id=eq.${id}`, { method: 'DELETE' });
+        console.log(`[bulkSave] Deleted: ${id}`);
+        addAuditLog({ type: 'delete', taskId: id, taskTitle: 'unknown', author: 'michael' });
+      } catch (e) {
+        console.error(`[bulkSave] Failed to delete ${id}:`, e.message);
+      }
+    }
+
+    console.log('[bulkSave] ✓ Complete');
+  } catch (e) {
+    console.error('[bulkSave] Error:', e.message);
+    throw e;
+  }
+}
+
 // ============ REQUEST HANDLER ============
 
 async function handleApiRequest(req, res, body) {
@@ -271,6 +376,16 @@ async function handleApiRequest(req, res, body) {
     }
     
     if (req.method === 'POST' && req.url === '/api/tasks') {
+      // Handle bulk save from frontend (full tasks array)
+      if (body.tasks && Array.isArray(body.tasks)) {
+        console.log(`[bulkSave] Syncing ${body.tasks.length} tasks from frontend`);
+        await bulkSaveTasks(body.tasks);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, saved: new Date().toISOString() }));
+        return;
+      }
+      
+      // Handle individual actions
       const { action, taskId, task, updates, comment, author } = body;
       
       switch (action) {
