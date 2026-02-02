@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   needs_mobile BOOLEAN DEFAULT FALSE,
   archived BOOLEAN DEFAULT FALSE,
   archived_at TIMESTAMPTZ,
+  celebration_image TEXT,
   metadata JSONB
 );
 

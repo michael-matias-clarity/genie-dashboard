@@ -345,6 +345,7 @@ async function getTasks() {
       needsMobile: t.needs_mobile || false,
       archived: t.archived || false,
       archivedAt: t.archived_at,
+      celebrationImage: t.celebration_image || null,
       comments: commentsByTask[t.id] || []
     }));
 
@@ -578,6 +579,7 @@ async function updateTask(taskId, updates, author = 'unknown') {
     payload.archived = updates.archived;
     if (updates.archived) payload.archived_at = new Date().toISOString();
   }
+  if (updates.celebrationImage !== undefined) payload.celebration_image = updates.celebrationImage;
   
   const { error } = await supabaseAdmin.from('tasks').update(payload).eq('id', safeId);
   if (error) throw error;
@@ -708,6 +710,7 @@ async function bulkSaveTasks(frontendTasks) {
         needs_mobile: task.needsMobile || false,
         archived: task.archived || false,
         archived_at: task.archivedAt || null,
+        celebration_image: task.celebrationImage || null,
         updated_at: new Date().toISOString()
       };
       
@@ -1061,14 +1064,14 @@ async function handleApiRequest(req, res, body) {
           return;
         }
 
-        const prompt = `A cute, celebratory cartoon for: "${taskTitle}". Style: minimal, friendly, warm colors. No text.`;
+        const prompt = `Create a cheerful, whimsical celebration cartoon for completing this task: "${taskTitle}". Style: cute kawaii characters celebrating, soft pastel colors with golden sparkles, warm and cozy feeling, no text or words in the image. The scene should capture the joy and satisfaction of accomplishment.`;
         
         const requestData = JSON.stringify({
-          model: 'dall-e-3',
+          model: 'gpt-image-1',
           prompt,
           n: 1,
           size: '1024x1024',
-          quality: 'standard'
+          quality: 'medium'
         });
 
         const apiReq = https.request({

@@ -1238,6 +1238,42 @@
         cursor: pointer;
         transition: all 0.2s ease;
         position: relative;
+        overflow: hidden;
+      }
+      
+      /* Celebration image thumbnail on granted cards */
+      .celebration-thumb {
+        margin: -14px -16px 12px -16px;
+        height: 120px;
+        overflow: hidden;
+        border-radius: var(--radius-md) var(--radius-md) 0 0;
+      }
+      .celebration-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s ease;
+      }
+      .kanban-card:hover .celebration-thumb img {
+        transform: scale(1.05);
+      }
+      .celebration-thumb.loading {
+        background: linear-gradient(135deg, #1a1625 0%, #2d1f3d 50%, #1a1625 100%);
+        background-size: 200% 200%;
+        animation: shimmer 2s ease-in-out infinite;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .celebration-loading {
+        color: var(--primary);
+        font-size: 0.85rem;
+        font-weight: 500;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes shimmer {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
       }
       
       .kanban-card::before {
@@ -2218,6 +2254,8 @@
               const showArchiveBtn = col === 'done';
               
               return `<div class="kanban-card priority-${task.priority} ${unread > 0 ? 'has-unread' : ''}" draggable="true" data-task-id="${task.id}" onclick="viewTask('${task.id}')" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
+                ${task.celebrationImage && col === 'done' ? `<div class="celebration-thumb"><img src="${task.celebrationImage}" alt="🎉"></div>` : 
+                  task.celebrationImageLoading && col === 'done' ? `<div class="celebration-thumb loading"><div class="celebration-loading">✨ Creating memory...</div></div>` : ''}
                 <div class="kanban-card-title">${task.title}</div>
                 ${desc ? `<div class="kanban-card-desc">${desc}${task.description?.length > 100 ? '...' : ''}</div>` : ''}
                 <div class="kanban-card-footer">
@@ -2616,6 +2654,10 @@
     }
 
     async function generateCelebrationImage(task) {
+      // Mark as generating (show spinner in UI)
+      task.celebrationImageLoading = true;
+      renderAll();
+      
       try {
         const res = await fetch('/api/generate-image', {
           method: 'POST',
@@ -2626,10 +2668,14 @@
         if (data.ok && data.imageUrl) {
           task.celebrationImage = data.imageUrl;
           saveAction('update', task.id, { updates: { celebrationImage: data.imageUrl } });
-          renderAll();
+        } else if (data.error) {
+          console.log('Image generation error:', data.error);
         }
       } catch (e) {
         console.log('Image generation failed:', e);
+      } finally {
+        task.celebrationImageLoading = false;
+        renderAll();
       }
     }
 
