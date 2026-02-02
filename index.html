@@ -1293,6 +1293,23 @@
         gap: 8px;
       }
       
+      /* Quick archive button on cards */
+      .quick-archive-btn {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 4px 8px;
+        font-size: 0.75rem;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: all 0.2s;
+      }
+      .quick-archive-btn:hover {
+        opacity: 1;
+        background: var(--bg-card-hover);
+        transform: scale(1.1);
+      }
+      
       /* Empty column state */
       .kanban-empty {
         text-align: center;
@@ -2157,6 +2174,7 @@
               const desc = (task.description || '').slice(0, 100);
               const commentCount = (task.comments || []).length;
               const unread = getUnreadGenieComments(task);
+              const showArchiveBtn = col === 'done';
               
               return `<div class="kanban-card priority-${task.priority} ${unread > 0 ? 'has-unread' : ''}" draggable="true" data-task-id="${task.id}" onclick="viewTask('${task.id}')" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
                 <div class="kanban-card-title">${task.title}</div>
@@ -2170,6 +2188,7 @@
                     ${task.image ? '<span>📷</span>' : ''}
                     ${unread > 0 ? `<span class="unread-badge">🧞 ${unread}</span>` : ''}
                     ${commentCount > 0 ? `<span style="color:var(--info)">💬 ${commentCount}</span>` : ''}
+                    ${showArchiveBtn ? `<button class="quick-archive-btn" onclick="event.stopPropagation(); quickArchive('${task.id}')" title="Archive">📦</button>` : ''}
                   </div>
                 </div>
               </div>`;
@@ -2606,6 +2625,15 @@
       viewTask(id); // Refresh the view
       renderAll();
       saveAction('update', id, { updates: { needsMobile: task.needsMobile } });
+    }
+
+    function quickArchive(id) {
+      const task = tasks.find(t => t.id === id);
+      if (!task) return;
+      task.archived = true;
+      task.archivedAt = new Date().toISOString();
+      renderAll();
+      saveAction('update', id, { updates: { archived: true, archivedAt: task.archivedAt } });
     }
 
     function editCurrentTask() {
