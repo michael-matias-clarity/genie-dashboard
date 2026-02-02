@@ -1558,8 +1558,7 @@
   <nav class="mission-tabs" id="tabs"></nav>
 
   <div class="type-filter" id="type-filter">
-    <button class="filter-btn" data-filter="all" onclick="setTypeFilter('all')">All</button>
-    <button class="filter-btn active" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
+    <button class="filter-btn active" data-filter="all" onclick="setTypeFilter('all')">All</button>
     <button class="filter-btn" data-filter="laptop" onclick="setTypeFilter('laptop')">💻 Laptop</button>
     <button class="filter-btn" data-filter="mobile" onclick="setTypeFilter('mobile')">📱 Mobile</button>
   </div>
@@ -1577,8 +1576,7 @@
       </div>
       <div class="desktop-filters" id="desktop-type-filter">
         <span class="filter-label">Filter:</span>
-        <button class="desktop-filter-btn" data-filter="all" onclick="setTypeFilter('all')">All</button>
-        <button class="desktop-filter-btn active" data-filter="single" onclick="setTypeFilter('single')">📌 One-time</button>
+        <button class="desktop-filter-btn active" data-filter="all" onclick="setTypeFilter('all')">All</button>
         <button class="desktop-filter-btn" data-filter="laptop" onclick="setTypeFilter('laptop')">💻 Laptop</button>
         <button class="desktop-filter-btn" data-filter="mobile" onclick="setTypeFilter('mobile')">📱 Mobile</button>
       </div>
@@ -1772,7 +1770,7 @@
     let viewingTaskId = null;
     let editingTaskId = null;
     let currentView = 'tasks';
-    let typeFilter = 'single';
+    let typeFilter = 'all';
 
     function setTypeFilter(filter) {
       typeFilter = filter;
