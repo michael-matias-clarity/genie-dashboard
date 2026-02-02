@@ -31,10 +31,15 @@ async function supabaseQuery(endpoint, options = {}) {
     ...options.headers
   };
   
+  console.log(`[supabaseQuery] ${options.method || 'GET'} ${endpoint}`);
+  
   const response = await fetch(url, { ...options, headers });
+  
+  console.log(`[supabaseQuery] Response: ${response.status} ${response.statusText}`);
   
   if (!response.ok) {
     const error = await response.text();
+    console.error(`[supabaseQuery] Error: ${error}`);
     throw new Error(`Supabase error: ${response.status} - ${error}`);
   }
   
@@ -141,21 +146,29 @@ async function addAuditLog(entry) {
 async function addTask(task) {
   const id = task.id || Date.now().toString();
   
-  await supabaseQuery('tasks', {
-    method: 'POST',
-    headers: { 'Prefer': 'return=minimal' },
-    body: JSON.stringify({
-      id,
-      title: task.title,
-      description: task.description || null,
-      success_criteria: task.successCriteria || null,
-      user_journey: task.userJourney || null,
-      column_name: task.column || 'inbox',
-      priority: task.priority || 'medium',
-      task_type: task.type || 'single',
-      needs_laptop: task.needsLaptop || false
-    })
-  });
+  console.log(`[addTask] Creating task ${id}: ${task.title}`);
+  
+  try {
+    await supabaseQuery('tasks', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=minimal' },
+      body: JSON.stringify({
+        id,
+        title: task.title,
+        description: task.description || null,
+        success_criteria: task.successCriteria || null,
+        user_journey: task.userJourney || null,
+        column_name: task.column || 'inbox',
+        priority: task.priority || 'medium',
+        task_type: task.type || 'single',
+        needs_laptop: task.needsLaptop || false
+      })
+    });
+    console.log(`[addTask] ✓ Task ${id} created in Supabase`);
+  } catch (e) {
+    console.error(`[addTask] ✗ Failed to create task ${id}:`, e.message);
+    throw e; // Re-throw to propagate error
+  }
   
   addAuditLog({ type: 'add', taskId: id, taskTitle: task.title, author: 'michael' });
   return id;
