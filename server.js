@@ -401,6 +401,25 @@ async function getGenieStatus() {
 }
 
 async function updateGenieStatus(sessionKey, status) {
+  // Local mock mode
+  if (LOCAL_MODE) {
+    mockData.genieStatus = {
+      active: status.active || false,
+      currentTask: status.currentTask || null,
+      updatedAt: new Date().toISOString(),
+      sessions: [{
+        sessionKey,
+        label: status.label || sessionKey,
+        active: status.active || false,
+        currentTask: status.currentTask || null,
+        model: status.model || null,
+        updatedAt: new Date().toISOString()
+      }]
+    };
+    console.log(`[mock] Genie status updated: ${sessionKey}`);
+    return { ok: true };
+  }
+
   try {
     const { error } = await supabaseAdmin.from('genie_status').upsert({
       session_key: sessionKey,
