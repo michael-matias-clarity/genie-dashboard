@@ -36,7 +36,7 @@ const DEFAULT_DATA = { columns: ['genie', 'inbox', 'todo', 'in_progress', 'revie
 const HISTORY_KEY = 'lamp:history';
 
 // Supabase configuration for persistent audit logging
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://dokdvzlvtqqehadqvshn.supabase.co';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://yjvecmrsfivmgfnikxsc.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 // Log to Supabase audit table (fire-and-forget, non-blocking)
