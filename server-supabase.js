@@ -260,17 +260,27 @@ async function bulkSaveTasks(frontendTasks) {
   }
 
   try {
-    // Get current tasks from Supabase
-    const currentTasks = await supabaseQuery('tasks?select=id');
+    // Get current state from Supabase (single query each)
+    const [currentTasks, currentComments] = await Promise.all([
+      supabaseQuery('tasks?select=id,column_name'),
+      supabaseQuery('comments?select=id,task_id,author,text')
+    ]);
+    
     const currentIds = new Set((currentTasks || []).map(t => t.id));
     const frontendIds = new Set(frontendTasks.map(t => t.id));
+    
+    // Build comment lookup: task_id -> array of {author, text}
+    const existingComments = {};
+    for (const c of currentComments || []) {
+      if (!existingComments[c.task_id]) existingComments[c.task_id] = [];
+      existingComments[c.task_id].push({ id: c.id, author: c.author, text: c.text });
+    }
 
-    // Find tasks to add, update, delete
+    // Find tasks to add vs update
     const toAdd = frontendTasks.filter(t => !currentIds.has(t.id));
     const toUpdate = frontendTasks.filter(t => currentIds.has(t.id));
-    const toDelete = [...currentIds].filter(id => !frontendIds.has(id));
 
-    console.log(`[bulkSave] Add: ${toAdd.length}, Update: ${toUpdate.length}, Delete: ${toDelete.length}`);
+    console.log(`[bulkSave] Add: ${toAdd.length}, Update: ${toUpdate.length}`);
 
     // Process additions
     for (const task of toAdd) {
@@ -291,32 +301,27 @@ async function bulkSaveTasks(frontendTasks) {
             needs_laptop: task.needsLaptop || false
           })
         });
-        console.log(`[bulkSave] Added: ${task.id}`);
         
-        // Add comments if any
-        if (task.comments && task.comments.length > 0) {
-          for (const c of task.comments) {
-            await supabaseQuery('comments', {
-              method: 'POST',
-              headers: { 'Prefer': 'return=minimal' },
-              body: JSON.stringify({
-                task_id: task.id,
-                author: c.author,
-                text: c.text
-              })
-            });
-          }
+        // Add all comments for new task
+        for (const c of task.comments || []) {
+          await supabaseQuery('comments', {
+            method: 'POST',
+            headers: { 'Prefer': 'return=minimal' },
+            body: JSON.stringify({ task_id: task.id, author: c.author, text: c.text })
+          });
         }
         
         addAuditLog({ type: 'add', taskId: task.id, taskTitle: task.title, author: 'michael' });
       } catch (e) {
         console.error(`[bulkSave] Failed to add ${task.id}:`, e.message);
+        throw e;
       }
     }
 
-    // Process updates
+    // Process updates (including comments)
     for (const task of toUpdate) {
       try {
+        // Update task fields
         await supabaseQuery(`tasks?id=eq.${task.id}`, {
           method: 'PATCH',
           headers: { 'Prefer': 'return=minimal' },
@@ -333,16 +338,29 @@ async function bulkSaveTasks(frontendTasks) {
             updated_at: new Date().toISOString()
           })
         });
+        
+        // Sync comments: find new comments (not in DB)
+        const dbComments = existingComments[task.id] || [];
+        const frontendComments = task.comments || [];
+        
+        // Simple approach: add comments that don't exist in DB
+        // Match by author + text (comments are immutable)
+        const dbSet = new Set(dbComments.map(c => `${c.author}:${c.text}`));
+        const newComments = frontendComments.filter(c => !dbSet.has(`${c.author}:${c.text}`));
+        
+        for (const c of newComments) {
+          await supabaseQuery('comments', {
+            method: 'POST',
+            headers: { 'Prefer': 'return=minimal' },
+            body: JSON.stringify({ task_id: task.id, author: c.author, text: c.text })
+          });
+          console.log(`[bulkSave] Added comment on ${task.id} by ${c.author}`);
+          addAuditLog({ type: 'comment', taskId: task.id, taskTitle: task.title, author: c.author });
+        }
       } catch (e) {
         console.error(`[bulkSave] Failed to update ${task.id}:`, e.message);
+        throw e;
       }
-    }
-
-    // NOTE: We do NOT auto-delete tasks from bulk save
-    // This prevents accidental data loss when frontend sends partial data
-    // Deletions must be explicit via action='delete'
-    if (toDelete.length > 0) {
-      console.log(`[bulkSave] Skipping ${toDelete.length} deletions (safety measure)`);
     }
 
     console.log('[bulkSave] ✓ Complete');
