@@ -2063,17 +2063,23 @@
         });
         // Set lastSavedTasks to enable rollback on failed saves
         lastSavedTasks = JSON.parse(JSON.stringify(tasks));
+        // Store server timestamp to detect stale data
         localStorage.setItem('lamp-tasks', JSON.stringify(tasks));
+        localStorage.setItem('lamp-server-time', data.serverTime || Date.now());
         renderAll();
         updateStatus('connected', 'ONLINE');
       } catch (e) {
+        // OFFLINE MODE: Show cached data but mark as read-only
+        // NEVER save localStorage data back to server - it could be stale
         const saved = localStorage.getItem('lamp-tasks');
         if (saved) {
           tasks = JSON.parse(saved);
-          lastSavedTasks = JSON.parse(JSON.stringify(tasks));
+          // Don't set lastSavedTasks in offline mode - prevents accidental saves
+          lastSavedTasks = null;
         }
         renderAll();
-        updateStatus('offline', 'OFFLINE');
+        updateStatus('offline', 'OFFLINE (read-only)');
+        console.warn('Running in offline mode - changes will NOT be saved');
       }
     }
 
@@ -2082,6 +2088,14 @@
     
     // Action-based API calls (more efficient than bulk saves)
     async function saveAction(action, taskId, payload = {}) {
+      // Block saves in offline mode to prevent stale data overwrites
+      if (lastSavedTasks === null) {
+        console.warn('Save blocked: running in offline/read-only mode');
+        updateStatus('offline', 'CANNOT SAVE (offline)');
+        alert('You are in offline mode. Please refresh to reconnect before making changes.');
+        return false;
+      }
+      
       // Prevent SSE from overwriting our optimistic update
       ignoreSSEUntil = Date.now() + 3000; // Ignore SSE for 3 seconds
       
@@ -2109,6 +2123,13 @@
     }
     
     async function saveTasks() {
+      // Block bulk saves - this is disabled to prevent data corruption
+      // The action-based API should be used instead
+      console.error('saveTasks() is disabled to prevent data corruption. Use saveAction() instead.');
+      updateStatus('offline', 'BULK SAVE DISABLED');
+      alert('Bulk save is disabled for data safety. Please use individual task operations.');
+      return false;
+      
       updateStatus('syncing', 'SAVING');
       const tasksToSave = JSON.parse(JSON.stringify(tasks)); // Deep copy
       try {

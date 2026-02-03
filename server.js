@@ -1163,6 +1163,9 @@ async function handleApiRequest(req, res, body) {
       
       if (req.url === '/api/tasks') {
         const data = await getTasks();
+        // Add server timestamp to help clients detect stale data
+        data.serverTime = Date.now();
+        data.serverVersion = '3.2.0'; // Version with data integrity fixes
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
         return;
@@ -1277,10 +1280,16 @@ async function handleApiRequest(req, res, body) {
       }
       
       if (req.url === '/api/tasks') {
+        // SECURITY: Bulk save disabled to prevent data corruption from stale clients
+        // All updates must use action-based API (add, update, delete, comment)
         if (body.tasks && Array.isArray(body.tasks)) {
-          await bulkSaveTasks(body.tasks);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, saved: new Date().toISOString() }));
+          console.warn('[SECURITY] Bulk save attempted and blocked - use action-based API');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            ok: false, 
+            error: 'Bulk save disabled for data integrity. Use action-based API.',
+            code: 'BULK_SAVE_DISABLED'
+          }));
           return;
         }
         
