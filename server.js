@@ -254,7 +254,19 @@ const mockData = {
     { type: 'add', taskId: 'task-7', taskTitle: 'Fix memory leak in websocket handler', author: 'michael', time: '2026-02-02T10:00:00Z', service: 'local' },
     { type: 'add', taskId: 'task-8', taskTitle: 'Update dependencies to latest versions', author: 'michael', time: '2026-02-02T11:00:00Z', service: 'local' }
   ],
-  genieStatus: { active: false, sessions: [], currentTask: null, updatedAt: null }
+  genieStatus: { active: false, sessions: [], currentTask: null, updatedAt: null },
+  projects: [
+    {
+      id: 'project-1',
+      title: 'Podcast Processing',
+      description: 'Process all 1171 podcast episodes: transcribe, create summaries, extract quotes, prepare social media posts.',
+      status: 'planning',
+      created: '2026-02-02',
+      comments: [
+        { author: 'michael', text: 'We need to process all episodes efficiently. Let\'s break this into batches.', time: '2026-02-02T10:00:00Z' }
+      ]
+    }
+  ]
 };
 
 // ============ VALIDATION HELPERS ============
@@ -346,6 +358,7 @@ async function getTasks() {
       archived: t.archived || false,
       archivedAt: t.archived_at,
       celebrationImage: t.celebration_image || null,
+      projectId: t.project_id || null,
       comments: commentsByTask[t.id] || []
     }));
 
@@ -511,6 +524,7 @@ async function addTask(task) {
       priority: task.priority || 'medium',
       type: task.type || 'single',
       created: new Date().toISOString().split('T')[0],
+      projectId: task.projectId || null,
       comments: []
     });
     addAuditLog({ type: 'add', taskId: id, taskTitle: task.title, author: 'michael' });
@@ -527,7 +541,8 @@ async function addTask(task) {
     column_name: task.column || 'inbox',
     priority: task.priority || 'medium',
     task_type: task.type || 'single',
-    needs_laptop: task.needsLaptop || false
+    needs_laptop: task.needsLaptop || false,
+    project_id: task.projectId || null
   });
   
   if (error) throw error;
@@ -580,6 +595,7 @@ async function updateTask(taskId, updates, author = 'unknown') {
     if (updates.archived) payload.archived_at = new Date().toISOString();
   }
   if (updates.celebrationImage !== undefined) payload.celebration_image = updates.celebrationImage;
+  if (updates.projectId !== undefined) payload.project_id = updates.projectId;
   
   const { error } = await supabaseAdmin.from('tasks').update(payload).eq('id', safeId);
   if (error) throw error;
@@ -711,6 +727,7 @@ async function bulkSaveTasks(frontendTasks) {
         archived: task.archived || false,
         archived_at: task.archivedAt || null,
         celebration_image: task.celebrationImage || null,
+        project_id: task.projectId || null,
         updated_at: new Date().toISOString()
       };
       
@@ -756,6 +773,225 @@ async function bulkSaveTasks(frontendTasks) {
     console.error('[bulkSave] Error:', e.message);
     throw e;
   }
+}
+
+// ============ PROJECT OPERATIONS ============
+
+async function getProjects() {
+  // Local mock mode
+  if (LOCAL_MODE) {
+    return mockData.projects.map(p => ({
+      ...p,
+      taskCount: mockData.tasks.filter(t => t.projectId === p.id).length,
+      doneCount: mockData.tasks.filter(t => t.projectId === p.id && t.column === 'done').length
+    }));
+  }
+
+  try {
+    const [projectsResult, commentsResult, tasksResult] = await Promise.all([
+      supabase.from('projects').select('*').order('created_at', { ascending: false }),
+      supabase.from('project_comments').select('*').order('created_at', { ascending: true }),
+      supabase.from('tasks').select('id, project_id, column_name').not('project_id', 'is', null)
+    ]);
+
+    if (projectsResult.error) throw projectsResult.error;
+
+    const commentsByProject = {};
+    for (const c of commentsResult.data || []) {
+      if (!commentsByProject[c.project_id]) commentsByProject[c.project_id] = [];
+      commentsByProject[c.project_id].push({
+        author: c.author,
+        text: c.text,
+        time: c.created_at
+      });
+    }
+
+    // Count tasks per project
+    const taskCounts = {};
+    const doneCounts = {};
+    for (const t of tasksResult.data || []) {
+      if (t.project_id) {
+        taskCounts[t.project_id] = (taskCounts[t.project_id] || 0) + 1;
+        if (t.column_name === 'done') {
+          doneCounts[t.project_id] = (doneCounts[t.project_id] || 0) + 1;
+        }
+      }
+    }
+
+    return (projectsResult.data || []).map(p => ({
+      id: p.id,
+      title: p.title,
+      description: p.description || '',
+      status: p.status || 'planning',
+      created: p.created_at ? p.created_at.split('T')[0] : '',
+      updatedAt: p.updated_at,
+      comments: commentsByProject[p.id] || [],
+      taskCount: taskCounts[p.id] || 0,
+      doneCount: doneCounts[p.id] || 0
+    }));
+  } catch (e) {
+    console.error('getProjects error:', e.message);
+    return [];
+  }
+}
+
+async function getProject(projectId) {
+  const safeId = sanitizeId(projectId);
+  if (!safeId) return null;
+
+  // Local mock mode
+  if (LOCAL_MODE) {
+    const project = mockData.projects.find(p => p.id === safeId);
+    if (!project) return null;
+    return {
+      ...project,
+      tasks: mockData.tasks.filter(t => t.projectId === safeId)
+    };
+  }
+
+  try {
+    const [projectResult, commentsResult, tasksResult] = await Promise.all([
+      supabase.from('projects').select('*').eq('id', safeId).single(),
+      supabase.from('project_comments').select('*').eq('project_id', safeId).order('created_at', { ascending: true }),
+      supabase.from('tasks').select('*').eq('project_id', safeId).order('created_at', { ascending: false })
+    ]);
+
+    if (projectResult.error) return null;
+
+    const project = projectResult.data;
+    return {
+      id: project.id,
+      title: project.title,
+      description: project.description || '',
+      status: project.status || 'planning',
+      created: project.created_at ? project.created_at.split('T')[0] : '',
+      updatedAt: project.updated_at,
+      comments: (commentsResult.data || []).map(c => ({
+        author: c.author,
+        text: c.text,
+        time: c.created_at
+      })),
+      tasks: (tasksResult.data || []).map(t => ({
+        id: t.id,
+        title: t.title,
+        column: t.column_name,
+        priority: t.priority
+      }))
+    };
+  } catch (e) {
+    console.error('getProject error:', e.message);
+    return null;
+  }
+}
+
+async function addProject(project) {
+  const id = project.id || Date.now().toString();
+
+  // Local mock mode
+  if (LOCAL_MODE) {
+    mockData.projects.push({
+      id,
+      title: project.title,
+      description: project.description || '',
+      status: 'planning',
+      created: new Date().toISOString().split('T')[0],
+      comments: []
+    });
+    console.log(`[mock] Added project: ${id}`);
+    return id;
+  }
+
+  const { error } = await supabaseAdmin.from('projects').insert({
+    id,
+    title: project.title,
+    description: project.description || null,
+    status: 'planning'
+  });
+
+  if (error) throw error;
+  console.log(`✓ Added project: ${id}`);
+  return id;
+}
+
+async function updateProject(projectId, updates) {
+  const safeId = sanitizeId(projectId);
+  if (!safeId) throw new Error('Invalid projectId');
+
+  // Local mock mode
+  if (LOCAL_MODE) {
+    const project = mockData.projects.find(p => p.id === safeId);
+    if (project) {
+      if (updates.title !== undefined) project.title = updates.title;
+      if (updates.description !== undefined) project.description = updates.description;
+      if (updates.status !== undefined) project.status = updates.status;
+      console.log(`[mock] Updated project: ${safeId}`);
+    }
+    return;
+  }
+
+  const payload = { updated_at: new Date().toISOString() };
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.description !== undefined) payload.description = updates.description;
+  if (updates.status !== undefined) payload.status = updates.status;
+
+  const { error } = await supabaseAdmin.from('projects').update(payload).eq('id', safeId);
+  if (error) throw error;
+  console.log(`✓ Updated project: ${safeId}`);
+}
+
+async function deleteProject(projectId) {
+  const safeId = sanitizeId(projectId);
+  if (!safeId) throw new Error('Invalid projectId');
+
+  // Local mock mode
+  if (LOCAL_MODE) {
+    const idx = mockData.projects.findIndex(p => p.id === safeId);
+    if (idx !== -1) {
+      mockData.projects.splice(idx, 1);
+      // Unlink tasks
+      mockData.tasks.forEach(t => {
+        if (t.projectId === safeId) t.projectId = null;
+      });
+      console.log(`[mock] Deleted project: ${safeId}`);
+    }
+    return;
+  }
+
+  // Unlink tasks first (don't delete them)
+  await supabaseAdmin.from('tasks').update({ project_id: null }).eq('project_id', safeId);
+  
+  // Delete project (comments cascade)
+  const { error } = await supabaseAdmin.from('projects').delete().eq('id', safeId);
+  if (error) throw error;
+  console.log(`✓ Deleted project: ${safeId}`);
+}
+
+async function addProjectComment(projectId, comment) {
+  const safeId = sanitizeId(projectId);
+  if (!safeId) throw new Error('Invalid projectId');
+
+  // Local mock mode
+  if (LOCAL_MODE) {
+    const project = mockData.projects.find(p => p.id === safeId);
+    if (project) {
+      project.comments.push({
+        author: comment.author,
+        text: comment.text,
+        time: new Date().toISOString()
+      });
+      console.log(`[mock] Added comment to project: ${safeId}`);
+    }
+    return;
+  }
+
+  const { error } = await supabaseAdmin.from('project_comments').insert({
+    project_id: safeId,
+    author: comment.author,
+    text: comment.text
+  });
+
+  if (error) throw error;
+  console.log(`✓ Added comment to project: ${safeId}`);
 }
 
 // ============ BACKUP TO GITHUB GIST ============
@@ -951,9 +1187,95 @@ async function handleApiRequest(req, res, body) {
         res.end(JSON.stringify(status));
         return;
       }
+      
+      // Projects API - GET
+      if (req.url === '/api/projects') {
+        const projects = await getProjects();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(projects));
+        return;
+      }
+      
+      if (req.url.startsWith('/api/projects/')) {
+        const projectId = req.url.split('/')[3];
+        const project = await getProject(projectId);
+        if (!project) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Project not found' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(project));
+        return;
+      }
     }
     
     if (req.method === 'POST') {
+      // Projects API - POST
+      if (req.url === '/api/projects') {
+        const { action, projectId, project, updates, comment } = body;
+        
+        switch (action) {
+          case 'add': {
+            if (!project?.title) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Project title is required'] }));
+              return;
+            }
+            const id = await addProject(project);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, id }));
+            return;
+          }
+          case 'update': {
+            const safeId = sanitizeId(projectId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid projectId'] }));
+              return;
+            }
+            await updateProject(safeId, updates);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          case 'delete': {
+            const safeId = sanitizeId(projectId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid projectId'] }));
+              return;
+            }
+            await deleteProject(safeId);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          case 'comment': {
+            const safeId = sanitizeId(projectId);
+            if (!safeId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Invalid projectId'] }));
+              return;
+            }
+            if (!comment?.text || !comment?.author) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, errors: ['Comment text and author required'] }));
+              return;
+            }
+            await addProjectComment(safeId, comment);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          default: {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, errors: ['Invalid action'] }));
+            return;
+          }
+        }
+      }
+      
       if (req.url === '/api/tasks') {
         if (body.tasks && Array.isArray(body.tasks)) {
           await bulkSaveTasks(body.tasks);

@@ -19,7 +19,27 @@ CREATE TABLE IF NOT EXISTS tasks (
   archived BOOLEAN DEFAULT FALSE,
   archived_at TIMESTAMPTZ,
   celebration_image TEXT,
+  project_id TEXT,
   metadata JSONB
+);
+
+-- Projects table
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT DEFAULT 'planning',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Project comments table (planning discussions)
+CREATE TABLE IF NOT EXISTS project_comments (
+  id BIGSERIAL PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  author TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Comments table (separate from tasks for data integrity)
@@ -50,11 +70,17 @@ CREATE INDEX IF NOT EXISTS idx_tasks_archived ON tasks(archived);
 CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
 CREATE INDEX IF NOT EXISTS idx_comments_created ON comments(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_genie_status_updated ON genie_status(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_project_comments_project ON project_comments(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_comments_created ON project_comments(created_at DESC);
 
 -- Enable RLS
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE genie_status ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_comments ENABLE ROW LEVEL SECURITY;
 
 -- Drop old permissive policies (run these manually if they exist)
 -- DROP POLICY IF EXISTS "tasks_all" ON tasks;
@@ -64,6 +90,8 @@ ALTER TABLE genie_status ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "tasks_select_anon" ON tasks FOR SELECT USING (true);
 CREATE POLICY "comments_select_anon" ON comments FOR SELECT USING (true);
 CREATE POLICY "genie_status_select_anon" ON genie_status FOR SELECT USING (true);
+CREATE POLICY "projects_select_anon" ON projects FOR SELECT USING (true);
+CREATE POLICY "project_comments_select_anon" ON project_comments FOR SELECT USING (true);
 
 -- Service key: full access for server-side operations
 CREATE POLICY "tasks_all_service" ON tasks FOR ALL 
@@ -78,10 +106,20 @@ CREATE POLICY "genie_status_all_service" ON genie_status FOR ALL
   USING (auth.role() = 'service_role') 
   WITH CHECK (auth.role() = 'service_role');
 
+CREATE POLICY "projects_all_service" ON projects FOR ALL 
+  USING (auth.role() = 'service_role') 
+  WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "project_comments_all_service" ON project_comments FOR ALL 
+  USING (auth.role() = 'service_role') 
+  WITH CHECK (auth.role() = 'service_role');
+
 -- Enable Realtime for live updates
 ALTER PUBLICATION supabase_realtime ADD TABLE tasks;
 ALTER PUBLICATION supabase_realtime ADD TABLE comments;
 ALTER PUBLICATION supabase_realtime ADD TABLE genie_status;
+ALTER PUBLICATION supabase_realtime ADD TABLE projects;
+ALTER PUBLICATION supabase_realtime ADD TABLE project_comments;
 
 -- Add service column to audit table if not exists
 ALTER TABLE lamp_audit ADD COLUMN IF NOT EXISTS service TEXT;

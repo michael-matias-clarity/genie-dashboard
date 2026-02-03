@@ -1295,6 +1295,19 @@
         box-shadow: 0 4px 16px rgba(0,0,0,0.3);
       }
       
+      .kanban-card .project-badge {
+        font-size: 0.7rem;
+        color: var(--primary);
+        margin-bottom: 6px;
+        cursor: pointer;
+        opacity: 0.8;
+        transition: opacity 0.2s;
+      }
+      .kanban-card .project-badge:hover {
+        opacity: 1;
+        text-decoration: underline;
+      }
+      
       .kanban-card-title {
         font-size: 0.9rem;
         font-weight: 600;
@@ -1622,6 +1635,7 @@
     <div class="desktop-controls-inner">
       <div class="desktop-nav">
         <button class="desktop-nav-btn active" data-view="tasks" onclick="switchView('tasks')">🪔 Wishes</button>
+        <button class="desktop-nav-btn" data-view="projects" onclick="switchView('projects')">📂 Projects</button>
         <button class="desktop-nav-btn" data-view="recurring" onclick="switchView('recurring')">🔄 Recurring</button>
         <button class="desktop-nav-btn" data-view="archived" onclick="switchView('archived')">📦 Archived</button>
         <button class="desktop-nav-btn" data-view="history" onclick="switchView('history')">📜 History</button>
@@ -1653,14 +1667,14 @@
     <button class="nav-item active" data-view="tasks" onclick="switchView('tasks')">
       <span class="icon">🪔</span>Wishes
     </button>
+    <button class="nav-item" data-view="projects" onclick="switchView('projects')">
+      <span class="icon">📂</span>Projects
+    </button>
     <button class="nav-item" data-view="add" onclick="openNewTask()">
       <span class="icon">✨</span>New
     </button>
     <button class="nav-item" data-view="console" onclick="switchView('console')">
       <span class="icon">🖥️</span>Console
-    </button>
-    <button class="nav-item" data-view="history" onclick="switchView('history')">
-      <span class="icon">📜</span>History
     </button>
     <button class="nav-item" data-view="stats" onclick="switchView('stats')">
       <span class="icon">📊</span>Stats
@@ -1822,6 +1836,8 @@
     const COLUMN_ORDER = ['genie', 'inbox', 'in_progress', 'blocked', 'review', 'done'];
 
     let tasks = [];
+    let projects = [];
+    let currentProject = null; // Currently viewing project
     let currentColumn = 'inbox';
     let viewingTaskId = null;
     let editingTaskId = null;
@@ -1847,6 +1863,7 @@
     });
 
     function getUnreadGenieComments(task) {
+      if (task.archived) return 0;
       if (!task.comments || task.comments.length === 0) return 0;
       const seenAt = task.seenAt || 0;
       return task.comments.filter(c => c.author === "genie" && new Date(c.time).getTime() > seenAt).length;
@@ -2022,8 +2039,14 @@
     async function loadTasks() {
       updateStatus('syncing', 'SYNCING');
       try {
-        const res = await fetch('/api/tasks');
-        const data = await res.json();
+        // Load tasks and projects in parallel
+        const [tasksRes, projectsRes] = await Promise.all([
+          fetch('/api/tasks'),
+          fetch('/api/projects')
+        ]);
+        const data = await tasksRes.json();
+        projects = await projectsRes.json();
+        
         tasks = (data.tasks || []).map(t => {
           // Migrate old column names
           let column = t.column;
@@ -2256,10 +2279,12 @@
               const commentCount = (task.comments || []).length;
               const unread = getUnreadGenieComments(task);
               const showArchiveBtn = col === 'done';
+              const project = task.projectId ? projects.find(p => p.id === task.projectId) : null;
               
               return `<div class="kanban-card priority-${task.priority} ${unread > 0 ? 'has-unread' : ''}" draggable="true" data-task-id="${task.id}" onclick="viewTask('${task.id}')" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
                 ${task.celebrationImage && col === 'done' ? `<div class="celebration-thumb"><img src="${task.celebrationImage}" alt="🎉"></div>` : 
                   task.celebrationImageLoading && col === 'done' ? `<div class="celebration-thumb loading"><div class="celebration-loading">✨ Creating memory...</div></div>` : ''}
+                ${project ? `<div class="project-badge" onclick="event.stopPropagation();currentProject='${project.id}';switchView('projects');">📂 ${project.title}</div>` : ''}
                 <div class="kanban-card-title">${task.title}</div>
                 ${desc ? `<div class="kanban-card-desc">${desc}${task.description?.length > 100 ? '...' : ''}</div>` : ''}
                 <div class="kanban-card-footer">
@@ -2314,6 +2339,7 @@
           else if (currentView === 'recurring') renderRecurring();
           else if (currentView === 'console') renderConsole();
           else if (currentView === 'archived') renderArchived();
+          else if (currentView === 'projects') renderProjects();
         }
       } else {
         // Mobile: always use task container
@@ -2326,6 +2352,7 @@
         else if (currentView === 'recurring') renderRecurring();
         else if (currentView === 'console') renderConsole();
         else if (currentView === 'archived') renderArchived();
+        else if (currentView === 'projects') renderProjects();
       }
       
       // Update notification badges
@@ -2340,7 +2367,7 @@
     }
 
     function viewTask(id) {
-      const task = tasks.find(t => t.id === id);
+      const task = tasks.find(t => String(t.id) === String(id));
       if (!task) return;
       
       viewingTaskId = id;
@@ -2373,11 +2400,17 @@
       
       // Meta
       const pIcon = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+      const project = task.projectId ? projects.find(p => p.id === task.projectId) : null;
       document.getElementById('view-meta').innerHTML = `
         <div class="meta-item">📅 ${task.created}</div>
         <div class="meta-item">${pIcon} ${task.priority}</div>
         <div class="meta-item">${task.type === 'recurring' ? '🔄 Recurring' : '📌 One-time'}</div>
         <div class="meta-item">${COLUMNS[task.column].icon} ${COLUMNS[task.column].label}</div>
+        ${project ? `<div class="meta-item" style="cursor:pointer;color:var(--primary);" onclick="currentProject='${project.id}';switchView('projects');">📂 ${project.title}</div>` : 
+          `<div class="meta-item"><select id="assign-project" onchange="assignTaskToProject('${id}', this.value)" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:0.75rem;">
+            <option value="">📂 No Project</option>
+            ${projects.map(p => `<option value="${p.id}">${p.title}</option>`).join('')}
+          </select></div>`}
       `;
 
       // Task image or Celebration image
@@ -2718,6 +2751,15 @@
       saveAction('update', id, { updates: { needsMobile: task.needsMobile } });
     }
 
+    function assignTaskToProject(taskId, projectId) {
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return;
+      task.projectId = projectId || null;
+      viewTask(taskId); // Refresh the view
+      renderAll();
+      saveAction('update', taskId, { updates: { projectId: task.projectId } });
+    }
+
     function quickArchive(id) {
       const task = tasks.find(t => t.id === id);
       if (!task) return;
@@ -2735,7 +2777,7 @@
 
     function archiveFromView() {
       if (!viewingTaskId) return;
-      const task = tasks.find(t => t.id === viewingTaskId);
+      const task = tasks.find(t => String(t.id) === String(viewingTaskId));
       if (!task) return;
       task.archived = true;
       task.archivedAt = new Date().toISOString();
@@ -3016,7 +3058,7 @@
 
     function renderRecurring() {
       const container = document.getElementById('task-container');
-      const recurringTasks = tasks.filter(t => t.type === 'recurring');
+      const recurringTasks = tasks.filter(t => t.type === 'recurring' && !t.archived);
       
       let html = `
         <h2 style="margin:0 0 20px;color:var(--accent);display:flex;align-items:center;gap:10px;">
@@ -3080,6 +3122,314 @@
       }
       
       container.innerHTML = html;
+    }
+
+    // ============ PROJECTS ============
+    
+    async function loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        projects = await res.json();
+      } catch (e) {
+        console.error('Failed to load projects:', e);
+        projects = [];
+      }
+    }
+
+    async function loadProject(projectId) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`);
+        return await res.json();
+      } catch (e) {
+        console.error('Failed to load project:', e);
+        return null;
+      }
+    }
+
+    async function saveProjectAction(action, projectId, payload = {}) {
+      try {
+        const res = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, projectId, ...payload })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          await loadProjects();
+          renderAll();
+        }
+        return data;
+      } catch (e) {
+        console.error('saveProjectAction error:', e);
+        return { ok: false };
+      }
+    }
+
+    function renderProjects() {
+      const container = document.getElementById('task-container');
+      
+      // If viewing a specific project
+      if (currentProject) {
+        renderProjectDetail();
+        return;
+      }
+      
+      // Project list view
+      let html = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+          <h2 style="margin:0;color:var(--text-secondary);display:flex;align-items:center;gap:10px;">
+            📂 Projects
+            <span style="font-size:0.7em;color:var(--text-tertiary);font-weight:normal;">(${projects.length})</span>
+          </h2>
+          <button onclick="openNewProject()" style="padding:10px 16px;background:linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);border:none;border-radius:var(--radius-md);color:white;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;">
+            ➕ New Project
+          </button>
+        </div>
+      `;
+      
+      if (projects.length === 0) {
+        html += `
+          <div style="padding:60px 20px;text-align:center;color:var(--text-tertiary);">
+            <div style="font-size:4rem;margin-bottom:20px;">📂</div>
+            <p style="font-size:1.1rem;margin-bottom:12px;">No projects yet</p>
+            <p style="font-size:0.9rem;">Projects help you break down complex work into manageable tasks.<br>Plan with Genie, then send tasks to your Kanban.</p>
+          </div>
+        `;
+      } else {
+        html += '<div style="display:grid;gap:16px;">';
+        
+        projects.forEach(project => {
+          const statusColors = {
+            planning: { bg: 'rgba(139, 92, 246, 0.15)', text: '#a78bfa', label: '📝 Planning' },
+            active: { bg: 'rgba(34, 197, 94, 0.15)', text: '#4ade80', label: '🟢 Active' },
+            completed: { bg: 'rgba(156, 163, 175, 0.15)', text: '#9ca3af', label: '✅ Completed' }
+          };
+          const status = statusColors[project.status] || statusColors.planning;
+          const progress = project.taskCount > 0 
+            ? Math.round((project.doneCount / project.taskCount) * 100) 
+            : 0;
+          
+          html += `
+            <div onclick="viewProject('${project.id}')" style="padding:20px;background:var(--bg-card);border-radius:var(--radius-md);border:1px solid var(--border);cursor:pointer;transition:all 0.2s ease;" onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='var(--border-light)'" onmouseout="this.style.transform='none';this.style.borderColor='var(--border)'">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                <div style="flex:1;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <span style="font-size:1.1rem;font-weight:600;color:var(--text-primary);">${project.title}</span>
+                    <span style="padding:4px 10px;background:${status.bg};color:${status.text};border-radius:var(--radius-sm);font-size:0.75rem;font-weight:500;">${status.label}</span>
+                  </div>
+                  <div style="font-size:0.9rem;color:var(--text-tertiary);line-height:1.5;margin-bottom:12px;">${project.description ? project.description.substring(0, 150) + (project.description.length > 150 ? '...' : '') : 'No description'}</div>
+                  <div style="display:flex;align-items:center;gap:16px;">
+                    <div style="font-size:0.8rem;color:var(--text-tertiary);">
+                      📋 ${project.doneCount}/${project.taskCount} tasks
+                    </div>
+                    <div style="font-size:0.8rem;color:var(--text-tertiary);">
+                      💬 ${project.comments?.length || 0} comments
+                    </div>
+                  </div>
+                </div>
+                ${project.taskCount > 0 ? `
+                  <div style="width:60px;height:60px;position:relative;">
+                    <svg viewBox="0 0 36 36" style="transform:rotate(-90deg);">
+                      <circle cx="18" cy="18" r="16" fill="none" stroke="var(--bg-tertiary)" stroke-width="3"/>
+                      <circle cx="18" cy="18" r="16" fill="none" stroke="var(--success)" stroke-width="3" 
+                        stroke-dasharray="${progress}, 100" stroke-linecap="round"/>
+                    </svg>
+                    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600;color:var(--text-primary);">${progress}%</div>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          `;
+        });
+        
+        html += '</div>';
+      }
+      
+      container.innerHTML = html;
+    }
+
+    async function renderProjectDetail() {
+      const container = document.getElementById('task-container');
+      const project = await loadProject(currentProject);
+      
+      if (!project) {
+        currentProject = null;
+        renderProjects();
+        return;
+      }
+      
+      const statusColors = {
+        planning: { bg: 'rgba(139, 92, 246, 0.15)', text: '#a78bfa', label: '📝 Planning' },
+        active: { bg: 'rgba(34, 197, 94, 0.15)', text: '#4ade80', label: '🟢 Active' },
+        completed: { bg: 'rgba(156, 163, 175, 0.15)', text: '#9ca3af', label: '✅ Completed' }
+      };
+      const status = statusColors[project.status] || statusColors.planning;
+      
+      // Get linked tasks with full info from local tasks array
+      const projectTasks = tasks.filter(t => t.projectId === project.id && !t.archived);
+      const doneTasks = projectTasks.filter(t => t.column === 'done');
+      
+      let html = `
+        <div style="margin-bottom:24px;">
+          <button onclick="currentProject=null;renderProjects();" style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;margin-bottom:16px;">
+            ← Back to Projects
+          </button>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+            <div>
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                <h2 style="margin:0;color:var(--text-primary);">${project.title}</h2>
+                <span style="padding:4px 10px;background:${status.bg};color:${status.text};border-radius:var(--radius-sm);font-size:0.8rem;font-weight:500;">${status.label}</span>
+              </div>
+              <p style="margin:0;color:var(--text-tertiary);line-height:1.6;">${project.description || 'No description'}</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <select onchange="updateProjectStatus('${project.id}', this.value)" style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);cursor:pointer;">
+                <option value="planning" ${project.status === 'planning' ? 'selected' : ''}>📝 Planning</option>
+                <option value="active" ${project.status === 'active' ? 'selected' : ''}>🟢 Active</option>
+                <option value="completed" ${project.status === 'completed' ? 'selected' : ''}>✅ Completed</option>
+              </select>
+              <button onclick="editProject('${project.id}')" style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;">✏️ Edit</button>
+              <button onclick="deleteProject('${project.id}')" style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--danger);cursor:pointer;">🗑️</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Planning Discussion -->
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:20px;margin-bottom:24px;">
+          <h3 style="margin:0 0 16px;color:var(--text-secondary);font-size:1rem;">💬 Planning Discussion</h3>
+          <div id="project-comments" style="max-height:300px;overflow-y:auto;margin-bottom:16px;">
+            ${project.comments.length === 0 ? `
+              <div style="padding:20px;text-align:center;color:var(--text-tertiary);font-size:0.9rem;">
+                Start planning with Genie here. Discuss strategy, break down work, and refine tasks.
+              </div>
+            ` : project.comments.map(c => `
+              <div style="display:flex;gap:12px;margin-bottom:16px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);">
+                <div style="width:36px;height:36px;border-radius:50%;background:${c.author === 'genie' ? 'linear-gradient(135deg, #8b5cf6, #06b6d4)' : 'var(--bg-secondary)'};display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">
+                  ${c.author === 'genie' ? '🧞' : '👤'}
+                </div>
+                <div style="flex:1;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <span style="font-weight:600;color:${c.author === 'genie' ? '#a78bfa' : 'var(--text-primary)'};">${c.author === 'genie' ? 'Genie' : 'Michael'}</span>
+                    <span style="font-size:0.75rem;color:var(--text-tertiary);">${c.time ? new Date(c.time).toLocaleString() : ''}</span>
+                  </div>
+                  <div style="color:var(--text-secondary);line-height:1.5;white-space:pre-wrap;">${linkify(c.text)}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div style="display:flex;gap:12px;">
+            <textarea id="project-comment-input" placeholder="Plan with Genie... discuss strategy, suggest tasks" style="flex:1;padding:12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);resize:none;min-height:60px;font-family:inherit;font-size:0.9rem;"></textarea>
+            <button onclick="addProjectComment('${project.id}')" style="padding:12px 20px;background:linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);border:none;border-radius:var(--radius-sm);color:white;font-weight:600;cursor:pointer;align-self:flex-end;">
+              Send
+            </button>
+          </div>
+        </div>
+        
+        <!-- Tasks -->
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="margin:0;color:var(--text-secondary);font-size:1rem;">📋 Tasks (${doneTasks.length}/${projectTasks.length} done)</h3>
+            <button onclick="addTaskToProject('${project.id}')" style="padding:8px 16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);cursor:pointer;font-size:0.85rem;">
+              ➕ Add Task
+            </button>
+          </div>
+          ${projectTasks.length === 0 ? `
+            <div style="padding:30px;text-align:center;color:var(--text-tertiary);">
+              <p>No tasks linked to this project yet.</p>
+              <p style="font-size:0.85rem;margin-top:8px;">Add tasks here, and they'll appear in your Kanban with a project badge.</p>
+            </div>
+          ` : `
+            <div style="display:grid;gap:10px;">
+              ${projectTasks.map(task => {
+                const colIcon = { genie: '🧞', inbox: '📥', in_progress: '🔨', blocked: '🚧', review: '👀', done: '✅' };
+                return `
+                  <div onclick="viewTask('${task.id}')" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);cursor:pointer;transition:background 0.2s;" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='var(--bg-tertiary)'">
+                    <span style="font-size:1.1rem;">${colIcon[task.column] || '📋'}</span>
+                    <span style="flex:1;color:${task.column === 'done' ? 'var(--text-tertiary)' : 'var(--text-primary)'};text-decoration:${task.column === 'done' ? 'line-through' : 'none'};">${task.title}</span>
+                    <span style="padding:4px 8px;background:var(--bg-card);border-radius:var(--radius-sm);font-size:0.75rem;color:var(--text-tertiary);">${COLUMNS[task.column]?.label || task.column}</span>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `}
+        </div>
+      `;
+      
+      container.innerHTML = html;
+      
+      // Scroll comments to bottom
+      const commentsDiv = document.getElementById('project-comments');
+      if (commentsDiv) commentsDiv.scrollTop = commentsDiv.scrollHeight;
+    }
+
+    function viewProject(projectId) {
+      currentProject = projectId;
+      renderProjects();
+    }
+
+    function openNewProject() {
+      const title = prompt('Project name:');
+      if (!title?.trim()) return;
+      const description = prompt('Brief description (optional):') || '';
+      saveProjectAction('add', null, { project: { title: title.trim(), description } });
+    }
+
+    function editProject(projectId) {
+      const project = projects.find(p => p.id === projectId);
+      if (!project) return;
+      
+      const title = prompt('Project name:', project.title);
+      if (!title?.trim()) return;
+      const description = prompt('Description:', project.description) || '';
+      saveProjectAction('update', projectId, { updates: { title: title.trim(), description } });
+    }
+
+    function updateProjectStatus(projectId, status) {
+      saveProjectAction('update', projectId, { updates: { status } });
+    }
+
+    async function deleteProject(projectId) {
+      if (!confirm('Delete this project? Tasks will be unlinked but not deleted.')) return;
+      await saveProjectAction('delete', projectId);
+      currentProject = null;
+      renderProjects();
+    }
+
+    async function addProjectComment(projectId) {
+      const input = document.getElementById('project-comment-input');
+      const text = input?.value?.trim();
+      if (!text) return;
+      
+      input.value = '';
+      await saveProjectAction('comment', projectId, { comment: { author: 'michael', text } });
+      
+      // Refresh project detail
+      if (currentProject === projectId) {
+        renderProjectDetail();
+      }
+    }
+
+    function addTaskToProject(projectId) {
+      const title = prompt('Task title:');
+      if (!title?.trim()) return;
+      
+      // Create task linked to project
+      const task = {
+        id: Date.now().toString(),
+        title: title.trim(),
+        column: 'inbox',
+        priority: 'medium',
+        type: 'single',
+        projectId: projectId,
+        comments: []
+      };
+      
+      tasks.push(task);
+      saveAction('add', task.id, { task });
+      
+      if (currentProject === projectId) {
+        renderProjectDetail();
+      }
     }
 
     function renderArchived() {
