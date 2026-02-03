@@ -1370,6 +1370,90 @@ async function handleApiRequest(req, res, body) {
         return;
       }
 
+      if (req.url === '/api/upload-image') {
+        // Upload image to Supabase Storage
+        const rateCheck = checkRateLimit(clientIP, 'generate-image');
+        if (!rateCheck.allowed) {
+          res.writeHead(429, { 
+            'Content-Type': 'application/json',
+            'Retry-After': rateCheck.retryAfter.toString()
+          });
+          res.end(JSON.stringify({ error: 'Rate limit exceeded', retryAfter: rateCheck.retryAfter }));
+          return;
+        }
+
+        const { imageData, filename, taskId } = body;
+        
+        if (!imageData) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'imageData (base64) is required' }));
+          return;
+        }
+
+        if (LOCAL_MODE) {
+          // Mock response for local mode
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            ok: true, 
+            url: 'https://placeholder.com/mock-image.png',
+            message: 'Local mode - image not actually uploaded'
+          }));
+          return;
+        }
+
+        try {
+          // Decode base64 image
+          const base64Data = imageData.replace(/^data:image\/\w+;base64,/, '');
+          const imageBuffer = Buffer.from(base64Data, 'base64');
+          
+          // Generate filename if not provided
+          const finalFilename = filename || `celebration-${Date.now()}.png`;
+          const filePath = `celebrations/${finalFilename}`;
+          
+          // Upload to Supabase Storage
+          const { data, error } = await supabaseAdmin.storage
+            .from('images')
+            .upload(filePath, imageBuffer, {
+              contentType: 'image/png',
+              upsert: true
+            });
+
+          if (error) {
+            console.error('Supabase storage error:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
+
+          // Get public URL
+          const { data: urlData } = supabaseAdmin.storage
+            .from('images')
+            .getPublicUrl(filePath);
+
+          const publicUrl = urlData.publicUrl;
+
+          // If taskId provided, update the task with the image
+          if (taskId) {
+            const { error: updateError } = await supabaseAdmin
+              .from('tasks')
+              .update({ celebration_image: publicUrl, updated_at: new Date().toISOString() })
+              .eq('id', taskId);
+            
+            if (updateError) {
+              console.error('Failed to update task with image:', updateError);
+            }
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, url: publicUrl }));
+        } catch (e) {
+          console.error('Image upload error:', e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+        return;
+      }
+
       if (req.url === '/api/generate-image') {
         // Rate limit image generation (expensive API)
         const rateCheck = checkRateLimit(clientIP, 'generate-image');
